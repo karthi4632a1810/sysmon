@@ -1009,14 +1009,55 @@ function paintNav(){
 }
 
 function paintHostPicker(){
-  var sel=$("hostSel");if(!sel)return;
-  sel.innerHTML=S.hosts.map(function(h){
-    return '<option value="'+h.id+'"'+(h.id===S.activeId?" selected":"")+'>'+esc(h.name)+' '+(h.status==="online"?"●":"○")+'</option>';
-  }).join("");
+  var sel=$("hostSel");
+  var cur=activeHost();
+  if(sel){
+    var targetHtml=S.hosts.map(function(h){
+      var isVps = (h.base && h.base.includes("192.168.101.116")) || (h.ip === "192.168.101.116");
+      var isLocal = (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1"))) || h.ip === "127.0.0.1";
+      var icon = isVps ? "☁️ " : (isLocal ? "💻 " : "🖥️ ");
+      var title = isVps ? ("VPS · " + (h.name||"admin") + " (192.168.101.116)") : (isLocal ? ("Local · " + (h.name||"Machine") + " (127.0.0.1)") : (h.name + (h.ip?" ("+h.ip+")":"")));
+      var stat = h.status==="online" ? "● Online ("+(h.ms!=null?h.ms+"ms":"ok")+")" : (h.status==="polling" ? "◌ Sync" : "○ Offline");
+      return '<option value="'+h.id+'"'+(h.id===S.activeId?" selected":"")+'>'+icon+esc(title)+' — '+stat+'</option>';
+    }).join("");
+
+    if(sel.dataset.lastHtml !== targetHtml || sel.value !== S.activeId){
+      sel.innerHTML = targetHtml;
+      sel.value = S.activeId;
+      sel.dataset.lastHtml = targetHtml;
+    }
+  }
+
+  // Update quick switch pills
+  var pillVps = $("pillVps");
+  var pillLocal = $("pillLocal");
+  if(pillVps && pillLocal && cur){
+    var isCurVps = (cur.base && cur.base.includes("192.168.101.116")) || (cur.ip === "192.168.101.116");
+    if(isCurVps){
+      pillVps.classList.add("active");
+      pillLocal.classList.remove("active");
+    } else {
+      pillLocal.classList.add("active");
+      pillVps.classList.remove("active");
+    }
+    // Update live status dots on pills
+    var vpsH = S.hosts.find(function(h){ return (h.base && h.base.includes("192.168.101.116")) || h.ip === "192.168.101.116"; });
+    var localH = S.hosts.find(function(h){ return (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1"))) || h.ip === "127.0.0.1"; });
+    if(vpsH){
+      var vDot = pillVps.querySelector(".dot");
+      if(vDot) vDot.className = "dot " + (vpsH.status==="online"?"ok":vpsH.status==="polling"?"warn":"bad");
+    }
+    if(localH){
+      var lDot = pillLocal.querySelector(".dot");
+      if(lDot) lDot.className = "dot " + (localH.status==="online"?"ok":localH.status==="polling"?"warn":"bad");
+    }
+  }
+
   var b=$("connBadge");
-  if(b){
-    var h=activeHost();
-    b.innerHTML=h?(h.status==="online"?'<span class="badge ok">● live</span>':'<span class="badge bad">● '+esc(h.status)+'</span>'):"";
+  if(b&&cur){
+    var cls=cur.status==="online"?"ok":cur.status==="polling"?"warn":"bad";
+    b.className="badge "+cls;
+    b.textContent=cur.status.toUpperCase()+(cur.ms!=null?" "+cur.ms+"ms":"");
   }
 }
 
@@ -1176,6 +1217,33 @@ function drawMulti(cv,host){
 
 /* ---------- Global Click Actions ---------- */
 document.addEventListener("click",async function(e){
+  var pv=e.target.closest("#pillVps");
+  if(pv){
+    var vHost=S.hosts.find(function(x){return (x.base&&x.base.includes("192.168.101.116"))||x.ip==="192.168.101.116";});
+    if(vHost && S.activeId!==vHost.id){
+      S.activeId=vHost.id;
+      localStorage.setItem("pulseboard.activeBase.v1",vHost.base);
+      pollHost(vHost);
+      render(true);
+      paintHostPicker();
+      toast("Switched to Remote VPS (192.168.101.116)","info");
+    }
+    return;
+  }
+  var pl=e.target.closest("#pillLocal");
+  if(pl){
+    var lHost=S.hosts.find(function(x){return (x.base&&(x.base.includes("localhost")||x.base.includes("127.0.0.1")))||x.ip==="127.0.0.1";});
+    if(lHost && S.activeId!==lHost.id){
+      S.activeId=lHost.id;
+      localStorage.setItem("pulseboard.activeBase.v1",lHost.base);
+      pollHost(lHost);
+      render(true);
+      paintHostPicker();
+      toast("Switched to Local Machine","info");
+    }
+    return;
+  }
+
   var nb=e.target.closest("[data-nav]");
   if(nb){S.view=nb.getAttribute("data-nav");render(true);return;}
   var t=e.target.closest("[data-act]");if(!t)return;
@@ -1183,7 +1251,17 @@ document.addEventListener("click",async function(e){
   var h=activeHost();
 
   if(act==="closeModal")closeModal();
-  else if(act==="focus"){S.activeId=id;S.view="overview";render(true);}
+  else if(act==="focus"){
+    S.activeId=id;
+    var fh=activeHost();
+    if(fh){
+      localStorage.setItem("pulseboard.activeBase.v1",fh.base);
+      pollHost(fh);
+    }
+    S.view="overview";
+    render(true);
+    paintHostPicker();
+  }
   else if(act==="addHost")modalAddHost(null);
   else if(act==="editHost"){var eh=S.hosts.find(function(x){return x.id===id;});modalAddHost(eh);}
   else if(act==="saveHost"){
@@ -1326,7 +1404,16 @@ async function probeHttp(host,app){
 }
 
 document.addEventListener("change",function(e){
-  if(e.target.id==="hostSel"){S.activeId=e.target.value;render(true);}
+  if(e.target.id==="hostSel"){
+    S.activeId=e.target.value;
+    var nh=activeHost();
+    if(nh){
+      localStorage.setItem("pulseboard.activeBase.v1",nh.base);
+      pollHost(nh);
+    }
+    render(true);
+    paintHostPicker();
+  }
   if(e.target.id==="fsFilterSel"){S.fsFilter=e.target.value;render(true);}
   if(e.target.id==="logLevelSel"){S.logLevel=e.target.value;render(true);}
 });
@@ -1353,17 +1440,51 @@ function boot(){
   S.hosts=[];
   try{
     var saved=JSON.parse(localStorage.getItem(LS_HOSTS)||"[]");
-    if(!Array.isArray(saved)||saved.length===0){
-      var localBase=(window.location&&window.location.origin&&!window.location.origin.startsWith("file:"))?window.location.origin:"http://localhost:22222";
-      saved=[{name:"VPS Server",base:localBase,token:""}];
+    if(!Array.isArray(saved)) saved=[];
+
+    var currentOrigin=(window.location&&window.location.origin&&!window.location.origin.startsWith("file:"))?window.location.origin:"";
+    var isOnVps = currentOrigin.includes("192.168.101.116");
+
+    var vpsBase = "http://192.168.101.116:22222";
+    var localBase = (currentOrigin && !isOnVps) ? currentOrigin : "http://localhost:22222";
+
+    var hasVps = saved.some(function(h){
+      return (h.base && h.base.includes("192.168.101.116")) || (h.name && h.name.includes("192.168.101.116"));
+    });
+    var hasLocal = saved.some(function(h){
+      return (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1"))) || (h.name && h.name.toLowerCase().includes("local"));
+    });
+
+    if(!hasVps){
+      saved.unshift({name:"VPS (192.168.101.116)", base:vpsBase, token:""});
     }
+    if(!hasLocal){
+      saved.push({name:"Localhost (127.0.0.1)", base:localBase, token:""});
+    }
+
+    // Standardize friendly names & clean up old container ID hashes
     saved.forEach(function(c){
+      if(c.base && c.base.includes("192.168.101.116")){
+        c.name = "VPS (192.168.101.116)";
+      } else if(c.base && (c.base.includes("localhost") || c.base.includes("127.0.0.1"))){
+        c.name = "Local Machine (localhost)";
+      }
       var nh=createHostObj(c);
       S.hosts.push(nh);
       startPolling(nh);
     });
+    saveHosts();
   }catch(e){}
-  if(S.hosts.length>0)S.activeId=S.hosts[0].id;
+
+  // Select initial active host: prioritize saved preference, then VPS
+  var savedBase = localStorage.getItem("pulseboard.activeBase.v1");
+  var matchedHost = savedBase ? S.hosts.find(function(h){return h.base===savedBase;}) : null;
+  if(matchedHost){
+    S.activeId = matchedHost.id;
+  } else {
+    var vHost = S.hosts.find(function(h){return h.base && h.base.includes("192.168.101.116");});
+    S.activeId = vHost ? vHost.id : (S.hosts[0] ? S.hosts[0].id : null);
+  }
   
   render(true);
   var be=$("bootEl");if(be)be.remove();

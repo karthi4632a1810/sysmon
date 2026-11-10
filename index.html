@@ -34,10 +34,22 @@
       </div>
     </div>
     <div class="spacer"></div>
-    <div class="hostPicker">
-      <span class="hpLabel">Target Host</span>
-      <select id="hostSel"></select>
-      <span id="connBadge"></span>
+    <div class="nodeSwitcher">
+      <div class="switchPills">
+        <button id="pillVps" class="switchPill" title="Switch to Remote VPS (192.168.101.116)">
+          <span class="dot ok"></span>
+          <span>☁️ VPS 192.168.101.116</span>
+        </button>
+        <button id="pillLocal" class="switchPill" title="Switch to Local Machine">
+          <span class="dot ok"></span>
+          <span>💻 Local</span>
+        </button>
+      </div>
+      <div class="hostPicker">
+        <span class="hpLabel">Node</span>
+        <select id="hostSel" title="Select Monitored Server Node"></select>
+        <span id="connBadge"></span>
+      </div>
     </div>
     <button id="quickRefreshBtn" class="btn sm" title="Refresh Telemetry Now" style="padding: 6px 12px;">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">

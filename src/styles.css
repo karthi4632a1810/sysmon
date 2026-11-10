@@ -227,6 +227,64 @@ button { font-family: inherit; }
 }
 .topbar .spacer { flex: 1; }
 
+.nodeSwitcher {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.switchPills {
+  display: flex;
+  align-items: center;
+  background: rgba(10, 15, 26, 0.7);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 3px;
+  gap: 4px;
+}
+.switchPill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+}
+.switchPill:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+.switchPill.active {
+  background: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.35);
+  color: var(--cyan-bright);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.2);
+}
+.switchPill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition: all 0.2s;
+}
+.switchPill .dot.ok {
+  background: var(--mint-bright);
+  box-shadow: 0 0 6px var(--mint-bright);
+}
+.switchPill .dot.warn {
+  background: var(--warn);
+}
+.switchPill .dot.bad {
+  background: var(--bad);
+}
+
 .hostPicker {
   display: flex;
   align-items: center;
@@ -256,7 +314,7 @@ button { font-family: inherit; }
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
-  max-width: 220px;
+  max-width: 320px;
   outline: none;
   padding-right: 22px;
   cursor: pointer;
@@ -1269,6 +1327,7 @@ canvas.chart.tall { height: 172px; }
   .g4 { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 860px) {
+  .switchPills { display: none; }
   .shell { grid-template-columns: 1fr; }
   .side {
     flex-direction: row;
