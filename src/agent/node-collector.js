@@ -411,7 +411,19 @@ const server = http.createServer(async (req, res) => {
       if (mRestart && req.method === "POST") {
         const id = mRestart[1].replace(/[^a-zA-Z0-9_.-]/g, "");
         const out = sh(`docker restart "${id}" 2>&1`, 15000);
-        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, out: out.slice(0, 1000) })); return;
+        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, action: "restart", out: out.slice(0, 1000) })); return;
+      }
+      const mStop = u.pathname.match(/^\/api\/containers\/(.+)\/stop$/);
+      if (mStop && req.method === "POST") {
+        const id = mStop[1].replace(/[^a-zA-Z0-9_.-]/g, "");
+        const out = sh(`docker stop "${id}" 2>&1`, 15000);
+        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, action: "stop", out: out.slice(0, 1000) })); return;
+      }
+      const mStart = u.pathname.match(/^\/api\/containers\/(.+)\/start$/);
+      if (mStart && req.method === "POST") {
+        const id = mStart[1].replace(/[^a-zA-Z0-9_.-]/g, "");
+        const out = sh(`docker start "${id}" 2>&1`, 15000);
+        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, action: "start", out: out.slice(0, 1000) })); return;
       }
       res.writeHead(404, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "not found" })); return;
     }

@@ -146,22 +146,35 @@ function applyLive(host,data,ms){
   if(data.db)host.db=data.db;
   checkThresholds(host);
 }
+
 function checkThresholds(host){
   var m=host.metrics;if(!m)return;
-  if(m.mem.pct>90)addAlert(host,"High RAM load on "+host.name+": "+Number(m.mem.pct).toFixed(1)+"%","bad");
+  
+  // High RAM alert (debounced)
+  host._prevMemAlert = host._prevMemAlert || false;
+  if(m.mem && m.mem.pct > 92){
+    if(!host._prevMemAlert){
+      addAlert(host,"High RAM load on "+host.name+": "+Number(m.mem.pct).toFixed(1)+"%","bad");
+      host._prevMemAlert = true;
+    }
+  } else {
+    host._prevMemAlert = false;
+  }
+
   (m.gpu||[]).forEach(function(g){if(g.temp>84)addAlert(host,"GPU thermal warning on "+host.name+" ("+(g.name||"gpu")+": "+Math.round(g.temp)+"C)","warn");});
   
   host._prevStates=host._prevStates||{};
   (host.containers||[]).forEach(function(c){
     var id=c.id||c.name;
     var prev=host._prevStates[id];
-    // Only alert if a running container crashes or stops unexpectedly
+    // Only alert if a running container crashes or stops unexpectedly (transition from running to stopped)
     if(prev==="running" && (c.state==="exited"||c.state==="dead")){
       addAlert(host,"Container stopped: "+c.name+" on "+host.name,"bad");
     }
     host._prevStates[id]=c.state;
   });
 }
+
 async function pollHost(host){
   if(host.kind!=="live"||!host.base)return;
   host.status="polling";paintHostPicker();
@@ -360,46 +373,95 @@ function parseCleanPorts(portStr, hostIp){
   return out;
 }
 
-/* ---------- Views ---------- */
+/* ---------- 1. Overview View ---------- */
 function vOverview(h){
   var m=h.metrics;
   var contRun=h.containers.filter(function(c){return c.state==="running";}).length;
   var appsRun=h.apps.filter(function(a){return a.status==="running";}).length;
+  
   var alerts=S.alerts.slice(0,5).map(function(a){
-    return '<div class="row" style="justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)">'+
-      '<span style="font-size:12.5px">'+esc(a.msg)+'</span><span class="muted small mono">'+fmtT(a.t)+'</span>'+
+    return '<div class="alertItem '+(a.sev||"info")+'">'+
+      '<div class="row" style="gap:10px">'+
+        '<span class="dot '+(a.sev||"info")+'"></span>'+
+        '<span style="font-weight:600">'+esc(a.msg)+'</span>'+
+      '</div>'+
+      '<span class="mono muted small">'+fmtT(a.t)+'</span>'+
     '</div>';
-  }).join("")||'<div class="muted small">All systems normal. RAM &gt; 90%, thermal &gt; 84°C, or container exits trigger alerts.</div>';
+  }).join("")||'<div class="muted small" style="padding:14px 0">All systems operating within nominal operational thresholds.</div>';
   
   var cards=S.hosts.map(function(x){
     var xm=x.metrics||{cpu:{},mem:{},gpu:[]};
     return '<div class="card">'+
-      '<div class="row" style="justify-content:space-between;margin-bottom:6px"><span style="font-weight:700;font-size:13.5px">'+esc(x.name)+'</span>'+statusBadge(x.status)+'</div>'+
-      '<div class="row" style="justify-content:space-between"><span class="big">'+pct(xm.cpu.usage)+'</span><span class="mono muted">'+esc(x.ip||"")+'</span></div>'+
-      '<div class="sub">RAM '+pct(xm.mem.pct)+' · GPU '+(xm.gpu&&xm.gpu[0]?pct(xm.gpu[0].util):"—")+'</div>'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:8px">'+
+        '<div class="row" style="gap:8px">'+
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-bright)" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>'+
+          '<span style="font-weight:700;font-size:14px">'+esc(x.name)+'</span>'+
+        '</div>'+
+        statusBadge(x.status)+
+      '</div>'+
+      '<div class="row" style="justify-content:space-between"><span class="big">'+pct(xm.cpu.usage)+'</span><span class="mono muted small">'+esc(x.ip||"")+'</span></div>'+
+      '<div class="sub" style="margin-top:2px">RAM '+pct(xm.mem.pct)+' · GPU '+(xm.gpu&&xm.gpu[0]?pct(xm.gpu[0].util):"—")+'</div>'+
       '<div class="bar'+(xm.cpu.usage>85?" bad":xm.cpu.usage>65?" warn":"")+'"><i style="width:'+clamp(xm.cpu.usage||0,0,100)+'%"></i></div>'+
-      '<div class="row" style="margin-top:12px;justify-content:space-between">'+
-        '<button class="btn sm" data-act="focus" data-id="'+x.id+'">Inspect</button>'+
+      '<div class="row" style="margin-top:14px;justify-content:space-between">'+
+        '<button class="btn sm primary" data-act="focus" data-id="'+x.id+'">Inspect Node</button>'+
         '<span class="muted small mono">'+x.containers.filter(function(c){return c.state==="running";}).length+'/'+x.containers.length+' containers</span>'+
       '</div>'+
     '</div>';
   }).join("");
 
   return ''+
-  '<div class="viewHead"><h2>Dashboard Overview</h2><p>'+hostHealthLine(h)+' — Central operational telemetry for all active compute nodes.</p></div>'+
-  '<div class="grid g4">'+
-    '<div class="card"><h3>CPU Load</h3><div class="big">'+pct(m.cpu.usage)+'</div><div class="sub">'+esc(h.specs.cpuModel||"")+' · '+(m.cpu.load1?m.cpu.load1.toFixed(1):"0.0")+' load</div><canvas class="chart" data-hist="cpu"></canvas></div>'+
-    '<div class="card"><h3>Memory (RAM)</h3><div class="big">'+pct(m.mem.pct)+'</div><div class="sub">'+fmtB(m.mem.used)+' / '+fmtB(m.mem.total)+'</div><canvas class="chart" data-hist="mem"></canvas></div>'+
-    '<div class="card"><h3>Docker Containers</h3><div class="big">'+contRun+' <span style="font-size:18px;color:var(--muted)">/ '+h.containers.length+'</span></div><div class="sub">'+(h.containers.length-contRun)+' stopped · live daemon socket</div><div class="bar"><i style="width:'+(h.containers.length?(contRun/h.containers.length*100):0)+'%"></i></div></div>'+
-    '<div class="card"><h3>Network Throughput</h3><div class="big" style="font-size:22px">↓ '+fmtBps(m.net.rxBps)+'</div><div class="sub">↑ '+fmtBps(m.net.txBps)+' · disk IO '+fmtBps((m.disk.readBps||0)+(m.disk.writeBps||0))+'</div><canvas class="chart" data-hist="rx"></canvas></div>'+
+  '<div class="overviewHero">'+
+    '<div class="heroLeft">'+
+      '<div class="heroTitle">'+
+        '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-bright)" stroke-width="2.2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'+
+        '<span>Infrastructure Overview</span>'+
+      '</div>'+
+      '<div class="heroSub">'+hostHealthLine(h)+' · Active Cluster Node Control</div>'+
+    '</div>'+
+    '<div class="heroRight">'+
+      '<button class="btn sm primary" data-act="addHost">+ Add Node</button>'+
+      '<button class="btn sm" data-act="pollNow" data-id="'+h.id+'">↻ Poll All</button>'+
+      '<button class="btn sm" data-act="exportCfg">⬇ Export Config</button>'+
+    '</div>'+
+  '</div>'+
+  '<div class="dockerKpiGrid">'+
+    '<div class="kpiCard">'+
+      '<div class="kpiHeader"><span class="kpiTitle">CPU Compute Load</span><div class="kpiIcon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/></svg></div></div>'+
+      '<div class="kpiValue">'+pct(m.cpu.usage)+'</div>'+
+      '<div class="kpiSub"><span class="chip" style="font-size:10px;padding:1px 6px">'+(h.specs.cpuCores||"?")+' cores</span> '+(m.cpu.load1?m.cpu.load1.toFixed(1):"0.0")+' load avg</div>'+
+      '<div class="bar" style="margin-top:6px"><i style="width:'+clamp(m.cpu.usage||0,0,100)+'%"></i></div>'+
+    '</div>'+
+    '<div class="kpiCard">'+
+      '<div class="kpiHeader"><span class="kpiTitle">Memory Footprint</span><div class="kpiIcon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg></div></div>'+
+      '<div class="kpiValue">'+pct(m.mem.pct)+'</div>'+
+      '<div class="kpiSub"><span class="mono">'+fmtB(m.mem.used)+' / '+fmtB(m.mem.total)+'</span></div>'+
+      '<div class="bar" style="margin-top:6px"><i style="width:'+clamp(m.mem.pct||0,0,100)+'%"></i></div>'+
+    '</div>'+
+    '<div class="kpiCard">'+
+      '<div class="kpiHeader"><span class="kpiTitle">Container Fleet</span><div class="kpiIcon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12.5c0 4.14-3.36 7.5-7.5 7.5H4c-.55 0-1-.45-1-1 0-1.5 1-3 3-3h11.5c1.38 0 2.5-1.12 2.5-2.5 0-.75-.33-1.42-.86-1.88l.86-.12z"/></svg></div></div>'+
+      '<div class="kpiValue">'+contRun+' <span style="font-size:16px;color:var(--muted)">/ '+h.containers.length+'</span></div>'+
+      '<div class="kpiSub"><span class="badge ok" style="padding:1px 7px;font-size:10px">● '+contRun+' Active</span> <span class="badge bad" style="padding:1px 7px;font-size:10px">○ '+(h.containers.length-contRun)+' Stopped</span></div>'+
+      '<div class="bar" style="margin-top:6px"><i style="width:'+(h.containers.length?(contRun/h.containers.length*100):0)+'%"></i></div>'+
+    '</div>'+
+    '<div class="kpiCard">'+
+      '<div class="kpiHeader"><span class="kpiTitle">Network In/Out</span><div class="kpiIcon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/></svg></div></div>'+
+      '<div class="kpiValue" style="font-size:20px;line-height:1.2">↓ '+fmtBps(m.net.rxBps)+'</div>'+
+      '<div class="kpiSub"><span style="color:var(--vio-bright)">↑ '+fmtBps(m.net.txBps)+'</span> · IO '+fmtBps((m.disk.readBps||0)+(m.disk.writeBps||0))+'</div>'+
+    '</div>'+
   '</div>'+
   '<div class="grid g2" style="margin-top:16px">'+
-    '<div class="card"><h3>Active Compute Nodes</h3><div class="grid g2" style="margin-top:8px">'+cards+'</div></div>'+
-    '<div class="card"><h3>Resource Concurrency &amp; Activity</h3><canvas class="chart tall" data-multi="1" data-host="'+h.id+'"></canvas>'+
-    '<hr style="border:0;border-top:1px solid var(--border);margin:16px 0"><h3>Telemetry Alerts</h3>'+alerts+'</div>'+
+    '<div class="card"><h3>Active Cluster Compute Nodes</h3><div class="grid g2" style="margin-top:10px">'+cards+'</div></div>'+
+    '<div class="card">'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>Combined Telemetry Waveform</h3><span class="mono muted small">Last '+MAX_HIST+' intervals</span></div>'+
+      '<canvas class="chart tall" data-multi="1" data-host="'+h.id+'"></canvas>'+
+      '<hr style="border:0;border-top:1px solid var(--border);margin:16px 0">'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>Operational Alert Stream</h3><span class="badge info">Real-Time</span></div>'+
+      '<div class="alertFeed">'+alerts+'</div>'+
+    '</div>'+
   '</div>';
 }
 
+/* ---------- 2. Docker View ---------- */
 function vDocker(h){
   var q=(S.contQ||"").toLowerCase();
   var filter=S.contFilter||"all";
@@ -414,7 +476,6 @@ function vDocker(h){
   var netRx=h.containers.reduce(function(acc,c){return acc+(c.netRx||0);},0);
   var netTx=h.containers.reduce(function(acc,c){return acc+(c.netTx||0);},0);
 
-  // Filter list
   var list=h.containers.filter(function(c){
     if(filter==="running"&&c.state!=="running")return false;
     if(filter==="stopped"&&c.state==="running")return false;
@@ -422,7 +483,6 @@ function vDocker(h){
     return (c.name||"").toLowerCase().includes(q)||(c.image||"").toLowerCase().includes(q)||(c.ports||"").toLowerCase().includes(q);
   });
 
-  // KPI Header Strip
   var kpiHtml='<div class="dockerKpiGrid">'+
     '<div class="kpiCard">'+
       '<div class="kpiHeader"><span class="kpiTitle">Total Containers</span><div class="kpiIcon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12.5c0 4.14-3.36 7.5-7.5 7.5H4c-.55 0-1-.45-1-1 0-1.5 1-3 3-3h11.5c1.38 0 2.5-1.12 2.5-2.5 0-.75-.33-1.42-.86-1.88l.86-.12z"/></svg></div></div>'+
@@ -448,7 +508,6 @@ function vDocker(h){
     '</div>'+
   '</div>';
 
-  // Toolbar
   var toolbarHtml='<div class="dockerToolbar">'+
     '<div class="searchBox">'+
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'+
@@ -483,7 +542,6 @@ function vDocker(h){
       '<p class="muted" style="margin-top:6px;font-size:13px">Try clearing search keywords or checking if the Docker socket is mounted.</p>'+
     '</div>';
   } else if(S.contView==="table"){
-    // Modern Table View
     var rows=list.map(function(c){
       var brand=getContainerBrand(c.name,c.image);
       var ports=parseCleanPorts(c.ports,h.ip);
@@ -547,7 +605,6 @@ function vDocker(h){
       '</table>'+
     '</div>';
   } else {
-    // Modern Cards Grid View
     var cards=list.map(function(c){
       var brand=getContainerBrand(c.name,c.image);
       var ports=parseCleanPorts(c.ports,h.ip);
@@ -622,83 +679,114 @@ function vDocker(h){
   bodyHtml;
 }
 
+/* ---------- 3. Systems View ---------- */
 function vSystems(h){
   var s=h.specs,m=h.metrics;
   var gpuRows=m.gpu.map(function(g){
     return '<tr><td><b>'+esc(g.name)+'</b></td><td class="mono">'+pct(g.util)+'</td><td class="mono">'+fmtB(g.memUsed)+' / '+fmtB(g.memTotal)+'</td><td class="mono">'+Math.round(g.temp)+'°C</td><td class="mono">'+Math.round(g.power||0)+'W · '+Math.round(g.fan||0)+'%</td></tr>';
-  }).join("")||'<tr><td colspan="5" class="muted">No dedicated GPU detected on this host.</td></tr>';
+  }).join("")||'<tr><td colspan="5" class="muted" style="padding:18px 14px">No dedicated GPU device detected. The agent continuously queries <code>nvidia-smi</code> and <code>rocm-smi</code>.</td></tr>';
   
   var mounts=h.mounts.map(function(d){
-    return '<div style="margin-bottom:12px">'+
-      '<div class="row" style="justify-content:space-between;margin-bottom:4px"><span class="mono"><b>'+esc(d.mount)+'</b> <span class="muted" style="font-size:11px">'+esc(d.dev||"")+'</span></span><span class="mono">'+pct(d.pct)+'</span></div>'+
-      '<div class="bar'+(d.pct>90?" bad":d.pct>75?" warn":"")+'"><i style="width:'+clamp(d.pct,0,100)+'%"></i></div>'+
-      '<div class="row" style="justify-content:space-between;margin-top:3px;font-size:11px;color:var(--dim)"><span class="mono">'+fmtB(d.used)+' in use</span><span class="mono">'+fmtB(d.total)+' capacity</span></div>'+
+    return '<div class="diskTile">'+
+      '<div class="diskTileHead">'+
+        '<div><div class="diskMountName">'+esc(d.mount)+'</div><div class="diskDevName">'+esc(d.dev||"")+'</div></div>'+
+        '<span class="mono" style="font-weight:700">'+pct(d.pct)+'</span>'+
+      '</div>'+
+      '<div class="bar'+(d.pct>90?" bad":d.pct>75?" warn":"")+'" style="margin-top:2px"><i style="width:'+clamp(d.pct,0,100)+'%"></i></div>'+
+      '<div class="row" style="justify-content:space-between;font-size:11px;color:var(--dim)">'+
+        '<span class="mono">'+fmtB(d.used)+' used</span>'+
+        '<span class="mono">'+fmtB(d.total)+' total capacity</span>'+
+      '</div>'+
     '</div>';
   }).join("");
 
-  return '<div class="viewHead"><h2>System Architecture &amp; Hardware</h2><p>'+hostHealthLine(h)+'</p></div>'+
+  return '<div class="viewHead"><h2>System Architecture &amp; Hardware Profile</h2><p>'+hostHealthLine(h)+'</p></div>'+
   '<div class="grid g2">'+
-    '<div class="card"><h3>Host Specifications</h3>'+
-      '<table class="tbl" style="margin-top:8px">'+
-        '<tr><td class="muted" style="width:140px">Hostname</td><td class="mono"><b>'+esc(h.name)+'</b></td></tr>'+
-        '<tr><td class="muted">Operating System</td><td>'+esc(s.os||"-")+' ('+esc(s.kernel||"")+')</td></tr>'+
-        '<tr><td class="muted">CPU Processor</td><td>'+esc(s.cpuModel||"")+' <span class="chip">'+(s.cpuCores||"?")+' cores</span></td></tr>'+
-        '<tr><td class="muted">Physical RAM</td><td class="mono"><b>'+fmtB(s.memTotal||(m.mem&&m.mem.total))+'</b></td></tr>'+
-        '<tr><td class="muted">Architecture</td><td class="mono">'+esc(s.arch||"x64")+'</td></tr>'+
-        '<tr><td class="muted">Host Uptime</td><td class="mono">'+fmtUp(m.uptime)+'</td></tr>'+
-        '<tr><td class="muted">Collector Endpoint</td><td class="mono"><span class="chip ghost">'+esc(h.base||"local")+'</span></td></tr>'+
-        '<tr><td class="muted">Database Sync</td><td>'+(h.db?(h.db.connected?'<span class="badge ok">● MongoDB '+esc(h.db.db||"sysmon")+' Connected</span>':'<span class="badge info">○ Memory Cache Mode</span>'):"—")+'</td></tr>'+
+    '<div class="card">'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>Host Hardware Profile</h3><span class="badge ok">● Online Host</span></div>'+
+      '<table class="contTable">'+
+        '<tr><td class="muted" style="width:160px">Hostname</td><td class="mono"><b>'+esc(h.name)+'</b></td></tr>'+
+        '<tr><td class="muted">Operating System</td><td><span class="chip" style="font-size:11px">'+esc(s.os||"-")+'</span> <span class="muted mono small">('+esc(s.kernel||"")+')</span></td></tr>'+
+        '<tr><td class="muted">Processor (CPU)</td><td><b>'+esc(s.cpuModel||"")+'</b> <span class="badge info" style="font-size:10px;padding:1px 6px">'+(s.cpuCores||"?")+' Cores</span></td></tr>'+
+        '<tr><td class="muted">Installed Memory</td><td class="mono" style="color:var(--cyan-bright);font-weight:700">'+fmtB(s.memTotal||(m.mem&&m.mem.total))+'</td></tr>'+
+        '<tr><td class="muted">Hardware Arch</td><td class="mono">'+esc(s.arch||"x64")+'</td></tr>'+
+        '<tr><td class="muted">System Uptime</td><td class="mono">'+fmtUp(m.uptime)+'</td></tr>'+
+        '<tr><td class="muted">Collector Socket</td><td class="mono"><span class="chip ghost">'+esc(h.base||"local")+'</span></td></tr>'+
+        '<tr><td class="muted">MongoDB State</td><td>'+(h.db?(h.db.connected?'<span class="badge ok">● Connected ('+esc(h.db.db||"sysmon")+')</span>':'<span class="badge info">○ Memory Cache Mode</span>'):"—")+'</td></tr>'+
       '</table>'+
     '</div>'+
-    '<div class="card"><h3>Filesystem Volumes &amp; Disk IO</h3>'+mounts+
-      '<div class="sub" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">Real-time Disk IO: ↓ '+fmtBps(m.disk.readBps)+' · ↑ '+fmtBps(m.disk.writeBps)+'</div>'+
-      '<canvas class="chart" data-hist="dio" style="margin-top:8px"></canvas>'+
+    '<div class="card">'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>Storage Volumes &amp; Disk IO</h3><span class="mono muted small">↓ '+fmtBps(m.disk.readBps)+' · ↑ '+fmtBps(m.disk.writeBps)+'</span></div>'+
+      '<div class="diskMatrix">'+mounts+'</div>'+
+      '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">'+
+        '<div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="mLabel">Real-Time Disk IO History</span></div>'+
+        '<canvas class="chart" data-hist="dio"></canvas>'+
+      '</div>'+
     '</div>'+
   '</div>'+
-  '<div class="card" style="margin-top:16px"><h3>Graphics Processing Units (GPUs)</h3>'+
-    '<table class="tbl"><thead><tr><th>GPU Model</th><th>Compute Util</th><th>VRAM</th><th>Temperature</th><th>Power &amp; Fan</th></tr></thead><tbody>'+gpuRows+'</tbody></table>'+
+  '<div class="card" style="margin-top:16px">'+
+    '<div class="row" style="justify-content:space-between;margin-bottom:10px"><h3>Graphics Processing Hardware (GPUs)</h3><span class="badge info">PCIe Acceleration</span></div>'+
+    '<table class="contTable"><thead><tr><th>Accelerator Model</th><th>Compute Load</th><th>VRAM Utilization</th><th>Thermal Temp</th><th>Power Draw &amp; Fan</th></tr></thead><tbody>'+gpuRows+'</tbody></table>'+
   '</div>';
 }
 
+/* ---------- 4. Performance View ---------- */
 function vPerf(h){
   var m=h.metrics;
   var cores=(m.cpu.perCore||[]).map(function(v,i){
-    return '<div class="row" style="gap:10px;margin-bottom:6px">'+
-      '<span class="mono muted" style="width:48px;font-size:11px">core '+i+'</span>'+
-      '<div class="bar" style="flex:1;margin:0"><i style="width:'+clamp(v,0,100)+'%"></i></div>'+
-      '<span class="mono" style="width:48px;text-align:right;font-size:11.5px">'+Math.round(v)+'%</span>'+
+    return '<div class="coreTile">'+
+      '<div class="coreHead"><span class="coreLabel">Core '+i+'</span><span class="coreVal">'+Math.round(v)+'%</span></div>'+
+      '<div class="bar" style="margin-top:2px"><i style="width:'+clamp(v,0,100)+'%"></i></div>'+
     '</div>';
   }).join("");
 
-  return '<div class="viewHead"><h2>Resource Performance Analysis</h2><p>'+hostHealthLine(h)+' — Per-core CPU scheduling, RAM saturation, network and disk latency metrics.</p></div>'+
-  '<div class="grid g2">'+
+  return '<div class="viewHead"><h2>Resource Performance &amp; Scheduler Analytics</h2><p>'+hostHealthLine(h)+' — Per-core CPU thread distribution, memory saturation, and IO waveforms.</p></div>'+
+  '<div class="dockerKpiGrid">'+
+    '<div class="kpiCard"><div class="kpiHeader"><span class="kpiTitle">CPU Compute Load</span></div><div class="kpiValue">'+pct(m.cpu.usage)+'</div><div class="bar"><i style="width:'+clamp(m.cpu.usage||0,0,100)+'%"></i></div></div>'+
+    '<div class="kpiCard"><div class="kpiHeader"><span class="kpiTitle">Memory Saturation</span></div><div class="kpiValue">'+pct(m.mem.pct)+'</div><div class="bar"><i style="width:'+clamp(m.mem.pct||0,0,100)+'%"></i></div></div>'+
+    '<div class="kpiCard"><div class="kpiHeader"><span class="kpiTitle">Network Bandwidth</span></div><div class="kpiValue" style="font-size:20px">↓ '+fmtBps(m.net.rxBps)+'</div><div class="kpiSub">↑ '+fmtBps(m.net.txBps)+' outbound</div></div>'+
+    '<div class="kpiCard"><div class="kpiHeader"><span class="kpiTitle">Storage IO Operations</span></div><div class="kpiValue" style="font-size:20px">'+fmtBps((m.disk.readBps||0)+(m.disk.writeBps||0))+'</div><div class="kpiSub">↓ '+fmtBps(m.disk.readBps)+' · ↑ '+fmtBps(m.disk.writeBps)+'</div></div>'+
+  '</div>'+
+  '<div class="grid g2" style="margin-top:16px">'+
     '<div class="card">'+
-      '<div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>CPU Load History</h3><span class="mono big" style="font-size:22px">'+pct(m.cpu.usage)+'</span></div>'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>CPU Compute Load Waveform</h3><span class="mono big" style="font-size:22px">'+pct(m.cpu.usage)+'</span></div>'+
       '<canvas class="chart tall" data-hist="cpu"></canvas>'+
-      '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)"><h3 style="margin-bottom:8px">Per-Core Compute Breakdown</h3><div style="max-height:160px;overflow:auto">'+cores+'</div></div>'+
+      '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">'+
+        '<div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="mLabel">Per-Core CPU Distribution</span><span class="mono muted small">'+(m.cpu.perCore||[]).length+' Logical Threads</span></div>'+
+        '<div class="coreMatrix">'+cores+'</div>'+
+      '</div>'+
     '</div>'+
     '<div class="card">'+
-      '<div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>Memory Footprint</h3><span class="mono big" style="font-size:22px">'+pct(m.mem.pct)+'</span></div>'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>Memory Footprint Waveform</h3><span class="mono big" style="font-size:22px">'+pct(m.mem.pct)+'</span></div>'+
       '<canvas class="chart tall" data-hist="mem"></canvas>'+
-      '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">'+
-        '<table class="tbl">'+
-          '<tr><td class="muted">Active Memory</td><td class="mono"><b>'+fmtB(m.mem.used)+'</b> of '+fmtB(m.mem.total)+'</td></tr>'+
+      '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">'+
+        '<div class="mLabel" style="margin-bottom:8px">Memory Allocation Breakdown</div>'+
+        '<table class="contTable">'+
+          '<tr><td class="muted" style="width:160px">Active RAM Usage</td><td class="mono"><b>'+fmtB(m.mem.used)+'</b> of '+fmtB(m.mem.total)+'</td></tr>'+
+          '<tr><td class="muted">Available Free RAM</td><td class="mono">'+fmtB((m.mem.total||0)-(m.mem.used||0))+'</td></tr>'+
           '<tr><td class="muted">Swap Allocation</td><td class="mono">'+fmtB(m.mem.swapUsed)+' / '+fmtB(m.mem.swapTotal)+'</td></tr>'+
-          '<tr><td class="muted">1m System Load</td><td class="mono">'+(m.cpu.load1||0)+'</td></tr>'+
+          '<tr><td class="muted">CPU Thermal Reading</td><td class="mono">'+(m.cpu.temp?Math.round(m.cpu.temp)+"°C":"—")+'</td></tr>'+
+          '<tr><td class="muted">1m System Load Average</td><td class="mono">'+(m.cpu.load1?m.cpu.load1.toFixed(2):"0.00")+'</td></tr>'+
         '</table>'+
       '</div>'+
     '</div>'+
   '</div>'+
   '<div class="grid g2" style="margin-top:16px">'+
-    '<div class="card"><h3>Bandwidth Throughput</h3><canvas class="chart tall" data-hist="rx"></canvas><div class="sub" style="margin-top:6px">Inbound: ↓ '+fmtBps(m.net.rxBps)+' · Outbound: ↑ '+fmtBps(m.net.txBps)+'</div></div>'+
-    '<div class="card"><h3>Storage IO Operations</h3><canvas class="chart tall" data-hist="dio"></canvas><div class="sub" style="margin-top:6px">Read: '+fmtBps(m.disk.readBps)+' · Write: '+fmtBps(m.disk.writeBps)+'</div></div>'+
+    '<div class="card"><h3>Bandwidth Throughput Waveform</h3><canvas class="chart tall" data-hist="rx"></canvas><div class="sub" style="margin-top:6px">Inbound: ↓ '+fmtBps(m.net.rxBps)+' · Outbound: ↑ '+fmtBps(m.net.txBps)+'</div></div>'+
+    '<div class="card"><h3>Storage IO Operations Waveform</h3><canvas class="chart tall" data-hist="dio"></canvas><div class="sub" style="margin-top:6px">Read: '+fmtBps(m.disk.readBps)+' · Write: '+fmtBps(m.disk.writeBps)+'</div></div>'+
   '</div>';
 }
 
+/* ---------- 5. Network View ---------- */
 function vNetwork(h){
   var m=h.metrics;
   var ifaces=(m.net.ifaces||[]).map(function(n){
-    return '<tr><td class="mono"><b>'+esc(n.name)+'</b></td><td class="mono"><span class="chip">'+esc(n.ip||"")+'</span></td><td class="mono" style="color:var(--cyan-bright)">↓ '+fmtBps(n.rxBps||m.net.rxBps)+'</td><td class="mono" style="color:var(--vio-bright)">↑ '+fmtBps(n.txBps||m.net.txBps)+'</td></tr>';
+    return '<tr>'+
+      '<td class="mono"><b>'+esc(n.name)+'</b></td>'+
+      '<td class="mono"><span class="chip">'+esc(n.ip||"")+'</span></td>'+
+      '<td class="mono" style="color:var(--cyan-bright)">↓ '+fmtBps(n.rxBps||m.net.rxBps)+'</td>'+
+      '<td class="mono" style="color:var(--vio-bright)">↑ '+fmtBps(n.txBps||m.net.txBps)+'</td>'+
+    '</tr>';
   }).join("")||'<tr><td colspan="4" class="muted">No network interfaces enumerated.</td></tr>';
   
   var ports=(h.ports||[]).map(function(p){
@@ -716,28 +804,32 @@ function vNetwork(h){
       '<td>'+esc(w.label||"")+'</td>'+
       '<td><button class="btn sm danger" data-act="unwatch" data-i="'+i+'">Remove</button></td>'+
     '</tr>';
-  }).join("")||'<tr><td colspan="3" class="muted">Watchlist is currently empty. Add IP and port below.</td></tr>';
+  }).join("")||'<tr><td colspan="3" class="muted" style="padding:16px 12px">Watchlist is currently empty. Add host IP and target port below.</td></tr>';
 
-  return '<div class="viewHead"><h2>Network Traffic &amp; Socket Probes</h2><p>'+hostHealthLine(h)+'</p></div>'+
+  return '<div class="viewHead"><h2>Network Traffic &amp; Socket Probes</h2><p>'+hostHealthLine(h)+' — Network interfaces, active listening ports, and target ping watchlist.</p></div>'+
   '<div class="grid g2">'+
     '<div class="card"><h3>Bandwidth Chart</h3><canvas class="chart tall" data-hist="rx"></canvas><div class="sub" style="margin-top:6px">Live traffic: ↓ RX '+fmtBps(m.net.rxBps)+' · ↑ TX '+fmtBps(m.net.txBps)+'</div></div>'+
     '<div class="card"><h3>Active Interfaces</h3><table class="contTable"><thead><tr><th>Interface</th><th>IP Address</th><th>Inbound</th><th>Outbound</th></tr></thead><tbody>'+ifaces+'</tbody></table></div>'+
   '</div>'+
   '<div class="grid g2" style="margin-top:16px">'+
-    '<div class="card"><h3>Listening Sockets on '+esc(h.name)+'</h3><table class="contTable"><thead><tr><th>Socket</th><th>Service</th><th>State</th><th>Latency</th></tr></thead><tbody>'+ports+'</tbody></table>'+
-      '<div class="toolbar" style="margin-top:12px"><button class="btn sm primary" data-act="checkPorts">Probe Ports Now</button></div>'+
+    '<div class="card">'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>Listening Sockets on '+esc(h.name)+'</h3><button class="btn sm primary" data-act="checkPorts">Probe Sockets</button></div>'+
+      '<table class="contTable"><thead><tr><th>Socket</th><th>Service</th><th>State</th><th>Latency</th></tr></thead><tbody>'+ports+'</tbody></table>'+
     '</div>'+
-    '<div class="card"><h3>Custom Service Watchlist</h3><table class="contTable"><thead><tr><th>Target</th><th>Description</th><th>Action</th></tr></thead><tbody>'+watch+'</tbody></table>'+
-      '<div class="toolbar" style="margin-top:12px">'+
-        '<input id="watchHostInput" placeholder="192.168.1.116" style="width:140px">'+
-        '<input id="watchPortInput" placeholder="55555" style="width:90px">'+
-        '<input id="watchLabelInput" placeholder="VPS Agent" style="flex:1">'+
+    '<div class="card">'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>Custom Service Watchlist</h3><span class="badge info">Local Storage</span></div>'+
+      '<table class="contTable"><thead><tr><th>Target Socket</th><th>Description</th><th>Action</th></tr></thead><tbody>'+watch+'</tbody></table>'+
+      '<div class="toolbar" style="margin-top:14px">'+
+        '<input id="watchHostInput" placeholder="192.168.101.116" style="width:140px;background:#060910;border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:#fff">'+
+        '<input id="watchPortInput" placeholder="55555" style="width:90px;background:#060910;border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:#fff">'+
+        '<input id="watchLabelInput" placeholder="SysMon VPS Agent" style="flex:1;background:#060910;border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:#fff">'+
         '<button class="btn sm primary" data-act="addWatch">Add to Watch</button>'+
       '</div>'+
     '</div>'+
   '</div>';
 }
 
+/* ---------- 6. Filesystem View ---------- */
 function vFs(h){
   var evs=h.fsEvents||[];
   var q=S.fsQ.toLowerCase();
@@ -758,14 +850,14 @@ function vFs(h){
       '<td class="muted">'+esc(e.proc||"")+'</td>'+
       '<td class="mono">'+(e.size?fmtB(e.size):"—")+'</td>'+
     '</tr>';
-  }).join("")||'<tr><td colspan="5" class="muted">No filesystem events recorded. Collector watches /srv, /etc, /data, /var/log.</td></tr>';
+  }).join("")||'<tr><td colspan="5" class="muted" style="padding:24px 14px;text-align:center">No filesystem access events logged in current buffer. The collector monitors /srv, /etc, /data, and /var/log.</td></tr>';
 
-  return '<div class="viewHead"><h2>Filesystem Event Audit</h2><p>'+hostHealthLine(h)+'</p></div>'+
+  return '<div class="viewHead"><h2>Filesystem Event Audit Stream</h2><p>'+hostHealthLine(h)+' — Real-time inotify / file access tracker.</p></div>'+
   '<div class="grid g4">'+
-    '<div class="card"><h3>Reads</h3><div class="big" style="color:var(--cyan-bright)">'+counts.read+'</div></div>'+
-    '<div class="card"><h3>Writes</h3><div class="big" style="color:var(--mint-bright)">'+counts.write+'</div></div>'+
-    '<div class="card"><h3>Edits</h3><div class="big" style="color:var(--warn-bright)">'+counts.edit+'</div></div>'+
-    '<div class="card"><h3>Deletes</h3><div class="big" style="color:var(--bad-bright)">'+counts.delete+'</div></div>'+
+    '<div class="card"><h3>File Reads</h3><div class="big" style="color:var(--cyan-bright)">'+counts.read+'</div><div class="sub">read access operations</div></div>'+
+    '<div class="card"><h3>File Writes</h3><div class="big" style="color:var(--mint-bright)">'+counts.write+'</div><div class="sub">new files written</div></div>'+
+    '<div class="card"><h3>Modifications</h3><div class="big" style="color:var(--warn-bright)">'+counts.edit+'</div><div class="sub">existing files modified</div></div>'+
+    '<div class="card"><h3>Deletions</h3><div class="big" style="color:var(--bad-bright)">'+counts.delete+'</div><div class="sub">files removed / unlinked</div></div>'+
   '</div>'+
   '<div class="card" style="margin-top:16px">'+
     '<div class="dockerToolbar">'+
@@ -773,7 +865,7 @@ function vFs(h){
         '<select id="fsFilterSel" style="background:#0a0e1a;border:1px solid var(--border2);color:#fff;border-radius:8px;padding:8px 12px;outline:none">'+
           '<option value="all">All Operations</option><option value="read">Read Only</option><option value="write">Write Only</option><option value="edit">Edit Only</option><option value="delete">Delete Only</option>'+
         '</select>'+
-        '<input id="fsQInput" placeholder="Filter path or process..." value="'+esc(S.fsQ)+'" style="min-width:220px;background:#0a0e1a;border:1px solid var(--border2);color:#fff;border-radius:8px;padding:8px 12px;outline:none">'+
+        '<input id="fsQInput" placeholder="Filter path or process..." value="'+esc(S.fsQ)+'" style="min-width:240px;background:#0a0e1a;border:1px solid var(--border2);color:#fff;border-radius:8px;padding:8px 12px;outline:none">'+
       '</div>'+
       '<button class="btn sm" data-act="pauseFs">'+(S.settings.pauseFs?"Resume Feed":"Pause Stream")+'</button>'+
     '</div>'+
@@ -783,6 +875,7 @@ function vFs(h){
   '</div>';
 }
 
+/* ---------- 7. Applications View ---------- */
 function vApps(h){
   var q=(S.appQ||"").toLowerCase();
   var list=h.apps.filter(function(a){return !q||(a.name||"").toLowerCase().includes(q)||String(a.port).includes(q);});
@@ -799,18 +892,19 @@ function vApps(h){
       '<td class="mono">'+(a.latencyMs!=null?a.latencyMs+" ms":"—")+'</td>'+
       '<td><div class="row">'+link+' <button class="btn sm" data-act="appLogs" data-id="'+a.id+'">Logs</button></div></td>'+
     '</tr>';
-  }).join("")||'<tr><td colspan="8" class="muted">No independent applications found. Docker container processes are listed under Docker.</td></tr>';
+  }).join("")||'<tr><td colspan="8" class="muted" style="padding:24px 14px;text-align:center">No independent host processes registered. Containerized services are managed under the Docker tab.</td></tr>';
 
-  return '<div class="viewHead"><h2>Applications &amp; Port Services</h2><p>'+hostHealthLine(h)+'</p></div>'+
+  return '<div class="viewHead"><h2>Applications &amp; Native Host Services</h2><p>'+hostHealthLine(h)+' — Discovered Node.js, Python, and system daemon services.</p></div>'+
   '<div class="card">'+
     '<div class="dockerToolbar">'+
-      '<input id="appQInput" placeholder="Filter application by name or port..." value="'+esc(S.appQ)+'" style="min-width:260px;background:#0a0e1a;border:1px solid var(--border2);color:#fff;border-radius:8px;padding:8px 12px;outline:none">'+
-      '<button class="btn sm primary" data-act="checkPorts">Probe Ports</button>'+
+      '<input id="appQInput" placeholder="Filter application by name or port..." value="'+esc(S.appQ)+'" style="min-width:280px;background:#0a0e1a;border:1px solid var(--border2);color:#fff;border-radius:8px;padding:8px 12px;outline:none">'+
+      '<button class="btn sm primary" data-act="checkPorts">Probe HTTP Latency</button>'+
     '</div>'+
-    '<div style="overflow:auto"><table class="contTable"><thead><tr><th>App / Executable</th><th>Runtime</th><th>Address</th><th>Status</th><th>Uptime</th><th>CPU / RAM</th><th>Latency</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    '<div style="overflow:auto"><table class="contTable"><thead><tr><th>Service / Executable</th><th>Runtime</th><th>Bind Address</th><th>Status</th><th>Uptime</th><th>CPU / RAM</th><th>Probe Latency</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
   '</div>';
 }
 
+/* ---------- 8. Logs View ---------- */
 function vLogs(h){
   var all=allLogs();
   var q=S.logQ.toLowerCase();
@@ -821,51 +915,55 @@ function vLogs(h){
   }).slice(0,250);
 
   var linesHtml=list.map(function(l){
-    return '<div class="logLine"><span class="t">'+fmtT(l.t)+'</span> <span class="chip" style="font-size:10px;padding:1px 6px">'+esc(l.host)+'</span> <span class="lv-'+(l.level||"info")+'">['+(l.level||"info").toUpperCase()+']</span> <span class="muted mono">'+esc(l.src)+':</span> '+esc(l.msg||"")+'</div>';
-  }).join("")||'<div class="muted">No logs recorded.</div>';
+    var lvl=(l.level||"info").toLowerCase();
+    return '<div class="logLine"><span class="t">'+fmtT(l.t)+'</span> <span class="chip" style="font-size:10px;padding:1px 6px">'+esc(l.host)+'</span> <span class="lv-'+lvl+'">['+lvl.toUpperCase()+']</span> <span class="muted mono">'+esc(l.src)+':</span> '+esc(l.msg||"")+'</div>';
+  }).join("")||'<div class="muted" style="padding:20px;text-align:center">No log messages currently match the query.</div>';
 
-  return '<div class="viewHead"><h2>Central Log Stream</h2><p>'+hostHealthLine(h)+'</p></div>'+
+  return '<div class="viewHead"><h2>Aggregated Cluster Telemetry &amp; Logs</h2><p>'+hostHealthLine(h)+' — Real-time event log collector stream.</p></div>'+
   '<div class="card">'+
     '<div class="dockerToolbar">'+
       '<div class="row" style="gap:8px">'+
         '<select id="logLevelSel" style="background:#0a0e1a;border:1px solid var(--border2);color:#fff;border-radius:8px;padding:8px 12px;outline:none">'+
-          '<option value="all">All Severities</option><option value="info">Info</option><option value="warn">Warn</option><option value="error">Error</option>'+
+          '<option value="all">All Severities</option><option value="info">Info Only</option><option value="warn">Warnings Only</option><option value="error">Errors Only</option>'+
         '</select>'+
-        '<input id="logQInput" placeholder="Search log text or source..." value="'+esc(S.logQ)+'" style="min-width:240px;background:#0a0e1a;border:1px solid var(--border2);color:#fff;border-radius:8px;padding:8px 12px;outline:none">'+
+        '<input id="logQInput" placeholder="Filter log text, source, or host..." value="'+esc(S.logQ)+'" style="min-width:260px;background:#0a0e1a;border:1px solid var(--border2);color:#fff;border-radius:8px;padding:8px 12px;outline:none">'+
       '</div>'+
       '<div class="row">'+
         '<button class="btn sm" data-act="pauseLogs">'+(S.settings.pauseLogs?"Resume Stream":"Pause Stream")+'</button>'+
-        '<button class="btn sm" data-act="dlLogs">Export Log File</button>'+
+        '<button class="btn sm primary" data-act="dlLogs">Export Log Stream</button>'+
       '</div>'+
     '</div>'+
     '<div class="terminalBox" style="max-height:560px">'+linesHtml+'</div>'+
   '</div>';
 }
 
+/* ---------- 9. Agents / Setup View ---------- */
 function vSetup(h){
-  return '<div class="viewHead"><h2>Agent &amp; Collector Configuration</h2><p>Deploy collectors on target VPS or Linux instances to stream telemetry directly to this dashboard.</p></div>'+
+  return '<div class="viewHead"><h2>Agent Fleet &amp; Compute Node Setup</h2><p>Deploy lightweight agents onto remote Linux or VPS instances to stream real-time metrics to this dashboard.</p></div>'+
   '<div class="grid g2">'+
-    '<div class="card"><h3>Active Telemetry Nodes</h3>'+
+    '<div class="card">'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>Active Monitored Nodes</h3><span class="badge ok">● '+S.hosts.length+' Registered</span></div>'+
       S.hosts.map(function(x){
-        return '<div class="row" style="justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">'+
-          '<div><div style="font-weight:700">'+esc(x.name)+'</div><div class="muted small mono">'+esc(x.base||"local")+'</div></div>'+
+        return '<div class="row" style="justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">'+
+          '<div><div style="font-weight:700;font-size:14px">'+esc(x.name)+'</div><div class="muted small mono">'+esc(x.base||"local")+'</div></div>'+
           '<div class="row">'+
+            '<button class="btn sm" data-act="pollNow" data-id="'+x.id+'">Poll</button>'+
             '<button class="btn sm" data-act="editHost" data-id="'+x.id+'">Edit</button>'+
             (S.hosts.length>1?'<button class="btn sm danger" data-act="delHost" data-id="'+x.id+'">Delete</button>':"")+
           '</div>'+
         '</div>';
       }).join("")+
-      '<div class="toolbar" style="margin-top:14px">'+
-        '<button class="btn sm primary" data-act="addHost">+ Add Remote Host</button>'+
+      '<div class="toolbar" style="margin-top:16px">'+
+        '<button class="btn sm primary" data-act="addHost">+ Add Remote Node</button>'+
         '<button class="btn sm" data-act="pasteJson">Import JSON Snapshot</button>'+
       '</div>'+
     '</div>'+
-    '<div class="card"><h3>Quick Install Instructions</h3>'+
-      '<ol class="steps">'+
-        '<li>Deploy the lightweight agent in Docker on port 55555: <br><code>docker run -d --name sysmon-vps-agent -p 55555:55555 -v /var/run/docker.sock:/var/run/docker.sock:ro -v /proc:/host/proc:ro ghcr.io/...</code></li>'+
-        '<li>Verify endpoint: <code>curl http://&lt;VPS_IP&gt;:55555/api/summary</code></li>'+
-        '<li>Add host in the panel above using the URL: <code>http://&lt;VPS_IP&gt;:55555</code></li>'+
-      '</ol>'+
+    '<div class="card">'+
+      '<div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>Instant Docker Deployment</h3><span class="badge info">Port 55555</span></div>'+
+      '<p class="muted small" style="margin-bottom:12px">Run this single Docker command on any target server to expose host metrics &amp; Docker container telemetry:</p>'+
+      '<div class="codeCard">docker run -d \\<br>&nbsp;&nbsp;--name sysmon-vps-agent \\<br>&nbsp;&nbsp;--restart unless-stopped \\<br>&nbsp;&nbsp;-p 55555:55555 \\<br>&nbsp;&nbsp;-v /var/run/docker.sock:/var/run/docker.sock:ro \\<br>&nbsp;&nbsp;-v /proc:/host/proc:ro \\<br>&nbsp;&nbsp;sysmon-vps-agent</div>'+
+      '<p class="muted small" style="margin:12px 0 6px">Verify the agent is responding:</p>'+
+      '<div class="codeCard">curl http://&lt;HOST_IP&gt;:55555/api/summary</div>'+
     '</div>'+
   '</div>';
 }
@@ -1174,7 +1272,52 @@ document.addEventListener("click",async function(e){
   else if(act==="unwatch"){
     S.watch.splice(parseInt(t.getAttribute("data-i"),10),1);saveSettings();render(true);
   }
+  else if(act==="exportCfg"){
+    download("pulseboard-hosts.json",JSON.stringify(S.hosts.filter(function(x){return x.kind==="live";}).map(function(x){return {name:x.name,base:x.base,token:x.token};}),null,2));
+  }
+  else if(act==="pauseFs"){
+    S.settings.pauseFs=!S.settings.pauseFs;saveSettings();render(true);
+  }
+  else if(act==="pauseLogs"){
+    S.settings.pauseLogs=!S.settings.pauseLogs;saveSettings();render(true);
+  }
+  else if(act==="dlLogs"){
+    download("pulseboard-"+h.name+".log",allLogs().map(function(l){return new Date(l.t).toISOString()+" ["+l.level+"] "+l.host+"/"+l.src+" "+l.msg;}).join("\n"));
+  }
+  else if(act==="checkPorts"){
+    toast("Probing host ports…");
+    for(var i=0;i<h.apps.length;i++){await probeHttp(h,h.apps[i]);}
+    render(true);
+  }
+  else if(act==="appLogs"){
+    var a=h.apps.find(function(x){return x.id===id;});
+    if(!a) return;
+    if(h.base){
+      try{
+        var hd={};if(h.token)hd["Authorization"]="Bearer "+h.token;
+        var r=await fetch(h.base+"/api/logs?app="+encodeURIComponent(a.name)+"&tail=200",{headers:hd});
+        var j=await r.json();modalLogs(a.name+" ("+h.name+")",(j.lines||j.logs||[]));return;
+      }catch(err){modalLogs(a.name+" (fetch failed: "+err.message+")",[]);return;}
+    }
+    modalLogs(a.name+" ("+h.name+")",h.logs.filter(function(l){return (l.src||"").includes(a.name);}));
+  }
 });
+
+function download(name,text){
+  var b=new Blob([text],{type:"text/plain"});
+  var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);},4000);
+}
+
+async function probeHttp(host,app){
+  var url="http://"+(app.ip||host.ip)+":"+app.port+"/";
+  var t0=performance.now();
+  try{
+    await fetch(url,{mode:"no-cors",signal:AbortSignal.timeout(6000)});
+    app.latencyMs=Math.round(performance.now()-t0);
+    if(app.status==="stopped"){app.status="running";}
+  }catch(e){app.latencyMs=null;}
+}
 
 document.addEventListener("change",function(e){
   if(e.target.id==="hostSel"){S.activeId=e.target.value;render(true);}
