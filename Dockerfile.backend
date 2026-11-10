@@ -2,8 +2,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install curl for container healthchecks
-RUN apk add --no-cache curl procps
+# Install curl and docker-cli for container healthchecks and docker inspection
+RUN apk add --no-cache curl procps docker-cli
 
 # Copy package descriptors and install dependencies
 COPY package*.json ./

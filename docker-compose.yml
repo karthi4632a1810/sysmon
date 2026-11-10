@@ -67,6 +67,27 @@ services:
     networks:
       - sysmon-net
 
+  # ====================================================
+  # 55555 - VPS Telemetry & Docker Agent (Node.js)
+  # ====================================================
+  vps-agent:
+    build:
+      context: ./vps-agent
+      dockerfile: Dockerfile
+    container_name: sysmon-vps-agent
+    ports:
+      - "${VPS_AGENT_PORT:-55555}:55555"
+    environment:
+      PORT: 55555
+      HOST: 0.0.0.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    restart: unless-stopped
+    networks:
+      - sysmon-net
+
 volumes:
   sysmon-mongo-data:
     name: sysmon-mongo-data
