@@ -338,6 +338,23 @@ function parseBytes(s) {
 }
 
 // ---- summary ----
+function getHostName() {
+  if (process.env.HOST_NAME) return process.env.HOST_NAME;
+  try {
+    if (fs.existsSync("/etc/host_hostname")) {
+      const h = fs.readFileSync("/etc/host_hostname", "utf8").trim();
+      if (h) return h;
+    }
+  } catch {}
+  try {
+    if (fs.existsSync("/proc/sys/kernel/hostname")) {
+      const h = fs.readFileSync("/proc/sys/kernel/hostname", "utf8").trim();
+      if (h) return h;
+    }
+  } catch {}
+  return os.hostname();
+}
+
 async function buildSummary() {
   const cpu = cpuSample(), netS = netSample(), dio = diskIo();
   const { apps } = appScan();
@@ -345,7 +362,7 @@ async function buildSummary() {
   const ports = apps.filter(a => a.port > 0).map(a => ({ port: a.port, ip: a.ip, proto: "tcp", service: a.name, open: a.open !== false, ms: a.ms ?? a.latencyMs ?? null }));
   ports.push({ port: 22, ip: localIp(), proto: "tcp", service: "ssh", open: true, ms: null });
   return {
-    hostname: os.hostname(), time: Date.now(), uptime: os.uptime(),
+    hostname: getHostName(), time: Date.now(), uptime: os.uptime(),
     specs: {
       os: os.type() + " " + os.release(), kernel: os.release(), arch: os.arch(),
       cpuModel: (os.cpus()[0] || {}).model || "CPU", cpuCores: os.cpus().length,

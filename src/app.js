@@ -112,7 +112,13 @@ async function fetchSummary(host){
 }
 function applyLive(host,data,ms){
   host.status="online";host.ms=Math.round(ms);host.lastOk=Date.now();host.lastError=null;
-  if(data.hostname&&!host._renamed)host.name=data.hostname;
+  if(data.hostname && !host._renamed){
+    if(/^[0-9a-f]{12}$/i.test(data.hostname)){
+      host.name = (host.ip && host.ip !== "127.0.0.1") ? ("VPS (" + host.ip + ")") : (host.name && !/^[0-9a-f]{12}$/i.test(host.name) ? host.name : "VPS Node");
+    } else {
+      host.name = data.hostname;
+    }
+  }
   if(data.specs)host.specs=data.specs;
   host.uptime=data.uptime!=null?data.uptime:(host.uptime||0);
   host.metrics={
