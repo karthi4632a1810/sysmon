@@ -150,11 +150,16 @@ function checkThresholds(host){
   var m=host.metrics;if(!m)return;
   if(m.mem.pct>90)addAlert(host,"High RAM load on "+host.name+": "+Number(m.mem.pct).toFixed(1)+"%","bad");
   (m.gpu||[]).forEach(function(g){if(g.temp>84)addAlert(host,"GPU thermal warning on "+host.name+" ("+(g.name||"gpu")+": "+Math.round(g.temp)+"C)","warn");});
+  
+  host._prevStates=host._prevStates||{};
   (host.containers||[]).forEach(function(c){
-    if(c.state==="exited"&&!c._alerted){
-      c._alerted=true;addAlert(host,"Container exited: "+c.name+" on "+host.name,"bad");
+    var id=c.id||c.name;
+    var prev=host._prevStates[id];
+    // Only alert if a running container crashes or stops unexpectedly
+    if(prev==="running" && (c.state==="exited"||c.state==="dead")){
+      addAlert(host,"Container stopped: "+c.name+" on "+host.name,"bad");
     }
-    if(c.state==="running")c._alerted=false;
+    host._prevStates[id]=c.state;
   });
 }
 async function pollHost(host){
