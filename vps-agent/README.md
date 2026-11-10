@@ -72,3 +72,4 @@ Open your PulseBoard Dashboard (e.g. `http://localhost:11111`):
 5. Click **Save Host**.
 
 Your VPS CPU, RAM, Docker containers, and logs will immediately appear live!
+

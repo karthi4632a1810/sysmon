@@ -14,3 +14,4 @@ ENV HOST=0.0.0.0
 EXPOSE 55555
 
 CMD ["node", "index.js"]
+

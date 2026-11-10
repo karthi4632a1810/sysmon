@@ -15,3 +15,4 @@ services:
       # Mount host proc/sys to read real VPS RAM and CPU metrics
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+

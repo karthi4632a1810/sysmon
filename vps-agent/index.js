@@ -507,3 +507,4 @@ server.listen(PORT, HOST, () => {
   console.log(`  Auth:          ${TOKEN ? "Enabled (Bearer token required)" : "Open access"}`);
   console.log(`======================================================\n`);
 });
+
