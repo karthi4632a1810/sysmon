@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PulseBoard — Infrastructure &amp; System Monitor</title>
+  <link rel="stylesheet" href="src/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2322d3ee'><circle cx='12' cy='12' r='10'/></svg>">
+</head>
+<body>
+  <div class="bg">
+    <i class="a1"></i>
+    <i class="a2"></i>
+    <i class="a3"></i>
+    <div class="grid"></div>
+    <div class="noise"></div>
+  </div>
+
+  <div id="bootEl">
+    <div class="bootOrb"><span></span></div>
+    <div class="bootName">PulseBoard</div>
+    <div class="bootBar"><i></i></div>
+  </div>
+
+  <header class="topbar">
+    <div class="logo">
+      <div class="logoDot"><i></i></div>
+      <div class="logoTxt">
+        <span>PulseBoard</span>
+        <small>System Monitor</small>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <div class="hostPicker">
+      <span class="hpLabel">Host</span>
+      <select id="hostSel"></select>
+      <span id="connBadge"></span>
+    </div>
+    <div class="livePill">
+      <span class="dot ok"></span>
+      <span id="liveClock" class="mono">--:--:--</span>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside class="side">
+      <div class="sideEyebrow">PulseBoard v1.0</div>
+      <nav id="sideNav"></nav>
+      <div class="foot">
+        <div class="feedRow"><span class="dot ok"></span> <b>LIVE METRICS</b></div>
+        <span>System telemetry &amp; collector feed</span>
+      </div>
+    </aside>
+    <main class="main">
+      <div id="viewCtn"></div>
+    </main>
+  </div>
+
+  <div id="toastWrap" class="toastWrap"></div>
+
+  <script src="src/app.js"></script>
+</body>
+</html>

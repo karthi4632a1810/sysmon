@@ -1,0 +1,77 @@
+services:
+  # ====================================================
+  # 11111 - Frontend Dashboard (Nginx UI)
+  # ====================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: sysmon-frontend
+    ports:
+      - "${FRONTEND_PORT:-11111}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - sysmon-net
+
+  # ====================================================
+  # 22222 - Backend Telemetry API & Collector (Node.js)
+  # ====================================================
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: sysmon-backend
+    environment:
+      PORT: 22222
+      HOST: 0.0.0.0
+      MONGO_URI: ${MONGO_URI:-mongodb://mongodb:33333/sysmon}
+      MONGO_DB: ${MONGO_DB:-sysmon}
+    ports:
+      - "${BACKEND_PORT:-22222}:22222"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:22222/api/summary || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - sysmon-net
+
+  # ====================================================
+  # 33333 - MongoDB Database (Telemetry & Alerts)
+  # ====================================================
+  mongodb:
+    image: mongo:7
+    container_name: sysmon-mongodb
+    command: ["--port", "33333"]
+    ports:
+      - "${MONGO_PORT:-33333}:33333"
+    volumes:
+      - sysmon-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --port 33333 --eval 'db.adminCommand(\"ping\")' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - sysmon-net
+
+volumes:
+  sysmon-mongo-data:
+    name: sysmon-mongo-data
+
+networks:
+  sysmon-net:
+    name: sysmon-network
+

@@ -1,0 +1,23 @@
+{
+  "name": "pulseboard-sysmon",
+  "version": "1.0.0",
+  "description": "PulseBoard — infrastructure & system monitor",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "collector": "node src/agent/node-collector.js --port 9100",
+    "collector:py": "python3 src/agent/python-collector.py --port 9100"
+  },
+  "keywords": [
+    "sysmon",
+    "dashboard",
+    "monitoring",
+    "telemetry",
+    "collector"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mongodb": "^7.8.0"
+  }
+}

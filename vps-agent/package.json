@@ -1,0 +1,12 @@
+{
+  "name": "sysmon-vps-agent",
+  "version": "1.0.0",
+  "description": "Lightweight Node.js system & Docker monitor agent for VPS",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": ["sysmon", "vps", "docker", "monitor", "telemetry"],
+  "author": "",
+  "license": "ISC"
+}
