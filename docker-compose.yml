@@ -29,6 +29,10 @@ services:
       HOST: 0.0.0.0
       MONGO_URI: ${MONGO_URI:-mongodb://mongodb:33333/sysmon}
       MONGO_DB: ${MONGO_DB:-sysmon}
+      VPS_SSH_HOST: ${VPS_SSH_HOST:-192.168.101.116}
+      VPS_SSH_PORT: ${VPS_SSH_PORT:-22}
+      VPS_SSH_USER: ${VPS_SSH_USER:-mapims}
+      VPS_SSH_PASSWORD: ${VPS_SSH_PASSWORD:-inhouse@67}
     ports:
       - "${BACKEND_PORT:-22222}:22222"
     volumes:

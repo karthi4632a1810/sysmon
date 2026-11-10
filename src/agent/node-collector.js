@@ -386,6 +386,13 @@ function cpuTemp() {
 }
 
 // ---- http ----
+let sshCollector = null;
+try {
+  sshCollector = require('./ssh-collector.js');
+} catch (e) {
+  console.warn("SSH collector module not loaded:", e.message);
+}
+
 function auth(req) {
   if (!TOKEN) return true;
   return req.headers["authorization"] === "Bearer " + TOKEN;
@@ -403,6 +410,42 @@ const server = http.createServer(async (req, res) => {
         const s = await buildSummary();
         db.saveSnapshot(s);
         res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(s)); return;
+      }
+      if (u.pathname === "/api/ssh/summary" || u.pathname === "/api/ssh/api/summary" || u.pathname === "/api/vps/summary") {
+        if (!sshCollector) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SSH collector module unavailable" }));
+          return;
+        }
+        try {
+          const s = await sshCollector.getSummary();
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(s));
+          return;
+        } catch (err) {
+          res.writeHead(502, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SSH collection failed: " + err.message }));
+          return;
+        }
+      }
+      if (u.pathname === "/api/ssh/logs" || u.pathname === "/api/ssh/api/logs") {
+        if (!sshCollector) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SSH collector module unavailable" }));
+          return;
+        }
+        try {
+          const c = u.searchParams.get("container");
+          const tail = Math.min(500, num(u.searchParams.get("tail") || "200", 200));
+          const r = await sshCollector.getLogs(c, tail);
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(r));
+          return;
+        } catch (err) {
+          res.writeHead(502, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SSH logs failed: " + err.message }));
+          return;
+        }
       }
       if (u.pathname === "/api/history") {
         const limit = parseInt(u.searchParams.get("limit") || "60", 10);
@@ -441,6 +484,26 @@ const server = http.createServer(async (req, res) => {
         const id = mStart[1].replace(/[^a-zA-Z0-9_.-]/g, "");
         const out = sh(`docker start "${id}" 2>&1`, 15000);
         res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, action: "start", out: out.slice(0, 1000) })); return;
+      }
+      const mSshAction = u.pathname.match(/^\/api\/ssh\/(?:api\/)?containers\/([^/]+)\/(restart|stop|start)$/);
+      if (mSshAction && req.method === "POST") {
+        if (!sshCollector) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SSH collector unavailable" }));
+          return;
+        }
+        try {
+          const id = mSshAction[1];
+          const action = mSshAction[2];
+          const r = await sshCollector.containerAction(id, action);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(r));
+          return;
+        } catch (err) {
+          res.writeHead(502, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SSH container action failed: " + err.message }));
+          return;
+        }
       }
       res.writeHead(404, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "not found" })); return;
     }

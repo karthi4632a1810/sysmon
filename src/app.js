@@ -1013,10 +1013,14 @@ function paintHostPicker(){
   var cur=activeHost();
   if(sel){
     var targetHtml=S.hosts.map(function(h){
-      var isVps = (h.base && h.base.includes("192.168.101.116")) || (h.ip === "192.168.101.116");
-      var isLocal = (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1"))) || h.ip === "127.0.0.1";
-      var icon = isVps ? "☁️ " : (isLocal ? "💻 " : "🖥️ ");
-      var title = isVps ? ("VPS · " + (h.name||"admin") + " (192.168.101.116)") : (isLocal ? ("Local · " + (h.name||"Machine") + " (127.0.0.1)") : (h.name + (h.ip?" ("+h.ip+")":"")));
+      var isSsh = (h.base && h.base.includes("/ssh")) || (h.name && h.name.includes("SSH"));
+      var isVps = (h.base && h.base.includes("192.168.101.116")) || (h.ip === "192.168.101.116") || isSsh;
+      var isLocal = (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1")) && !isSsh) || (h.ip === "127.0.0.1" && !isSsh);
+      var icon = isSsh ? "🔑 " : (isVps ? "☁️ " : (isLocal ? "💻 " : "🖥️ "));
+      var title = h.name || "Server";
+      if(isSsh && !title.includes("SSH")) title = "VPS · admin (SSH Agentless)";
+      else if(isVps && !title.includes("192.168.101.116") && !isSsh) title = "VPS · " + (h.name||"admin") + " (192.168.101.116)";
+      else if(isLocal && !title.toLowerCase().includes("local")) title = "Localhost (" + (h.ip||"127.0.0.1") + ")";
       var stat = h.status==="online" ? "● Online ("+(h.ms!=null?h.ms+"ms":"ok")+")" : (h.status==="polling" ? "◌ Sync" : "○ Offline");
       return '<option value="'+h.id+'"'+(h.id===S.activeId?" selected":"")+'>'+icon+esc(title)+' — '+stat+'</option>';
     }).join("");
@@ -1032,7 +1036,7 @@ function paintHostPicker(){
   var pillVps = $("pillVps");
   var pillLocal = $("pillLocal");
   if(pillVps && pillLocal && cur){
-    var isCurVps = (cur.base && cur.base.includes("192.168.101.116")) || (cur.ip === "192.168.101.116");
+    var isCurVps = (cur.base && (cur.base.includes("192.168.101.116") || cur.base.includes("/ssh"))) || (cur.ip === "192.168.101.116") || (cur.name && cur.name.includes("VPS"));
     if(isCurVps){
       pillVps.classList.add("active");
       pillLocal.classList.remove("active");
@@ -1041,8 +1045,8 @@ function paintHostPicker(){
       pillVps.classList.remove("active");
     }
     // Update live status dots on pills
-    var vpsH = S.hosts.find(function(h){ return (h.base && h.base.includes("192.168.101.116")) || h.ip === "192.168.101.116"; });
-    var localH = S.hosts.find(function(h){ return (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1"))) || h.ip === "127.0.0.1"; });
+    var vpsH = S.hosts.find(function(h){ return (h.base && (h.base.includes("192.168.101.116") || h.base.includes("/ssh"))) || h.ip === "192.168.101.116" || (h.name && h.name.includes("VPS")); });
+    var localH = S.hosts.find(function(h){ return (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1")) && !h.base.includes("/ssh")) || h.ip === "127.0.0.1"; });
     if(vpsH){
       var vDot = pillVps.querySelector(".dot");
       if(vDot) vDot.className = "dot " + (vpsH.status==="online"?"ok":vpsH.status==="polling"?"warn":"bad");
@@ -1219,7 +1223,7 @@ function drawMulti(cv,host){
 document.addEventListener("click",async function(e){
   var pv=e.target.closest("#pillVps");
   if(pv){
-    var vHost=S.hosts.find(function(x){return (x.base&&x.base.includes("192.168.101.116"))||x.ip==="192.168.101.116";});
+    var vHost=S.hosts.find(function(x){return (x.base&&(x.base.includes("192.168.101.116")||x.base.includes("/ssh")))||x.ip==="192.168.101.116"||(x.name&&x.name.includes("VPS"));});
     if(vHost && S.activeId!==vHost.id){
       S.activeId=vHost.id;
       localStorage.setItem("pulseboard.activeBase.v1",vHost.base);
@@ -1232,7 +1236,7 @@ document.addEventListener("click",async function(e){
   }
   var pl=e.target.closest("#pillLocal");
   if(pl){
-    var lHost=S.hosts.find(function(x){return (x.base&&(x.base.includes("localhost")||x.base.includes("127.0.0.1")))||x.ip==="127.0.0.1";});
+    var lHost=S.hosts.find(function(x){return (x.base&&(x.base.includes("localhost")||x.base.includes("127.0.0.1"))&&!x.base.includes("/ssh"))||x.ip==="127.0.0.1";});
     if(lHost && S.activeId!==lHost.id){
       S.activeId=lHost.id;
       localStorage.setItem("pulseboard.activeBase.v1",lHost.base);
@@ -1445,26 +1449,29 @@ function boot(){
     var currentOrigin=(window.location&&window.location.origin&&!window.location.origin.startsWith("file:"))?window.location.origin:"";
     var isOnVps = currentOrigin.includes("192.168.101.116");
 
-    var vpsBase = "http://192.168.101.116:22222";
     var localBase = (currentOrigin && !isOnVps) ? currentOrigin : "http://localhost:22222";
+    var vpsSshBase = localBase + "/api/ssh";
+    var vpsDirectBase = "http://192.168.101.116:22222";
 
-    var hasVps = saved.some(function(h){
-      return (h.base && h.base.includes("192.168.101.116")) || (h.name && h.name.includes("192.168.101.116"));
+    var hasSshVps = saved.some(function(h){
+      return (h.base && h.base.includes("/ssh")) || (h.name && h.name.includes("SSH"));
     });
     var hasLocal = saved.some(function(h){
-      return (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1"))) || (h.name && h.name.toLowerCase().includes("local"));
+      return (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1")) && !h.base.includes("/ssh")) || (h.name && h.name.toLowerCase().includes("local"));
     });
 
-    if(!hasVps){
-      saved.unshift({name:"VPS (192.168.101.116)", base:vpsBase, token:""});
+    if(!hasSshVps){
+      saved.unshift({name:"VPS (192.168.101.116) [SSH Agentless]", base:vpsSshBase, token:""});
     }
     if(!hasLocal){
-      saved.push({name:"Localhost (127.0.0.1)", base:localBase, token:""});
+      saved.push({name:"Local Machine (localhost)", base:localBase, token:""});
     }
 
     // Standardize friendly names & clean up old container ID hashes
     saved.forEach(function(c){
-      if(c.base && c.base.includes("192.168.101.116")){
+      if(c.base && c.base.includes("/ssh")){
+        c.name = "VPS (192.168.101.116) [SSH Agentless]";
+      } else if(c.base && c.base.includes("192.168.101.116")){
         c.name = "VPS (192.168.101.116)";
       } else if(c.base && (c.base.includes("localhost") || c.base.includes("127.0.0.1"))){
         c.name = "Local Machine (localhost)";
@@ -1482,7 +1489,7 @@ function boot(){
   if(matchedHost){
     S.activeId = matchedHost.id;
   } else {
-    var vHost = S.hosts.find(function(h){return h.base && h.base.includes("192.168.101.116");});
+    var vHost = S.hosts.find(function(h){return (h.base && (h.base.includes("/ssh") || h.base.includes("192.168.101.116")));});
     S.activeId = vHost ? vHost.id : (S.hosts[0] ? S.hosts[0].id : null);
   }
   
