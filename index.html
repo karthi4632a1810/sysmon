@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PulseBoard — Infrastructure &amp; System Monitor</title>
+  <title>PulseBoard — Infrastructure &amp; Container Monitor</title>
   <link rel="stylesheet" href="src/styles.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2322d3ee'><circle cx='12' cy='12' r='10'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2322d3ee' stroke-width='2.2'><path d='M3 12h4l2.5-7 5 14 2.5-7h4'/></svg>">
 </head>
 <body>
   <div class="bg">
@@ -13,7 +13,6 @@
     <i class="a2"></i>
     <i class="a3"></i>
     <div class="grid"></div>
-    <div class="noise"></div>
   </div>
 
   <div id="bootEl">
@@ -23,19 +22,29 @@
   </div>
 
   <header class="topbar">
-    <div class="logo">
-      <div class="logoDot"><i></i></div>
+    <div class="logo" onclick="location.hash=''; location.reload();">
+      <div class="logoDot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+        </svg>
+      </div>
       <div class="logoTxt">
         <span>PulseBoard</span>
-        <small>System Monitor</small>
+        <small>System &amp; Docker Monitor</small>
       </div>
     </div>
     <div class="spacer"></div>
     <div class="hostPicker">
-      <span class="hpLabel">Host</span>
+      <span class="hpLabel">Target Host</span>
       <select id="hostSel"></select>
       <span id="connBadge"></span>
     </div>
+    <button id="quickRefreshBtn" class="btn sm" title="Refresh Telemetry Now" style="padding: 6px 12px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+      </svg>
+      <span>Poll</span>
+    </button>
     <div class="livePill">
       <span class="dot ok"></span>
       <span id="liveClock" class="mono">--:--:--</span>
@@ -44,11 +53,11 @@
 
   <div class="shell">
     <aside class="side">
-      <div class="sideEyebrow">PulseBoard v1.0</div>
+      <div class="sideEyebrow">PulseBoard v2.0 PRO</div>
       <nav id="sideNav"></nav>
       <div class="foot">
-        <div class="feedRow"><span class="dot ok"></span> <b>LIVE METRICS</b></div>
-        <span>System telemetry &amp; collector feed</span>
+        <div class="feedRow"><span class="dot ok"></span> <b>LIVE TELEMETRY</b></div>
+        <span>Real-time Docker socket &amp; host metric streams</span>
       </div>
     </aside>
     <main class="main">
