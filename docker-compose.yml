@@ -1,0 +1,17 @@
+services:
+  vps-agent:
+    build: .
+    container_name: sysmon-vps-agent
+    restart: unless-stopped
+    ports:
+      - "55555:55555"
+    environment:
+      PORT: 55555
+      HOST: 0.0.0.0
+      # AUTH_TOKEN: "your-secret-token"
+    volumes:
+      # Mount Docker socket to inspect containers, read stats, and tail logs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Mount host proc/sys to read real VPS RAM and CPU metrics
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
