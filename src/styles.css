@@ -1155,6 +1155,118 @@ button { font-family: inherit; }
   gap: 6px;
 }
 
+/* ---------- Docker Stack Groups View ---------- */
+.stackGroups {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.stackGroup {
+  background: linear-gradient(160deg, rgba(16, 22, 36, 0.72), rgba(9, 13, 22, 0.85));
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(16px);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.stackGroup:hover {
+  border-color: var(--border2);
+}
+.stackHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 16px 20px;
+  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.stackHeader:hover {
+  background: rgba(34, 211, 238, 0.045);
+}
+.stackGroup.collapsed .stackHeader {
+  border-bottom-color: transparent;
+}
+.stackTitleWrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.stackChevron {
+  color: var(--dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), color 0.15s;
+}
+.stackHeader:hover .stackChevron {
+  color: var(--cyan-bright);
+}
+.stackGroup.collapsed .stackChevron {
+  transform: rotate(-90deg);
+}
+.stackIcon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.16), rgba(139, 92, 246, 0.16));
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cyan-bright);
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.stackTitle {
+  font-family: var(--head, var(--font));
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.2px;
+}
+.stackRight {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.stackMetrics {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(6, 9, 16, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 99px;
+  padding: 5px 14px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.stackStat {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+}
+.stackStatLabel {
+  color: var(--dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.stackBody {
+  padding: 18px 20px 20px;
+}
+.stackGroup.collapsed .stackBody {
+  display: none;
+}
+
 /* ---------- Container Table View (Dense List Mode) ---------- */
 .contTableWrap {
   background: var(--glass-card);

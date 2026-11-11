@@ -300,6 +300,27 @@ function probePorts(apps) {
   });
 }
 
+function extractStack(labels, name, networks) {
+  if (labels) {
+    const m = String(labels).match(/com\.docker\.compose\.project=([^,]+)/);
+    if (m && m[1]) return m[1].trim();
+  }
+  const n = String(name || "");
+  if (n.includes("-")) return n.split("-")[0];
+  if (n.includes("_")) return n.split("_")[0];
+  if (networks && networks !== "bridge" && networks !== "host" && networks !== "none") {
+    return String(networks).split(",")[0].replace(/_default$/i, "");
+  }
+  return "standalone";
+}
+function extractService(labels, name) {
+  if (labels) {
+    const m = String(labels).match(/com\.docker\.compose\.service=([^,]+)/);
+    if (m && m[1]) return m[1].trim();
+  }
+  return name;
+}
+
 // ---- docker ----
 function dockerInfo() {
   const containers = [];
@@ -318,6 +339,9 @@ function dockerInfo() {
       const memLim = parseBytes(String(s.MemUsage || "").split("/")[1]);
       containers.push({
         id: j.ID, name: j.Names, image: j.Image,
+        stack: extractStack(j.Labels, j.Names, j.Networks),
+        service: extractService(j.Labels, j.Names),
+        network: j.Networks || "",
         state: /Up/i.test(j.Status) ? "running" : /Paused/i.test(j.Status) ? "paused" : "exited",
         status: j.Status, cpu: num(String(s.CPUPerc || "").replace("%", "")),
         memUsed, memLimit: memLim, netRx: parseBytes(String(s.NetIO || "").split("/")[0]),

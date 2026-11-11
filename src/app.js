@@ -7,7 +7,7 @@ var POLL_DEFAULT=3000, MAX_HIST=120;
 var S = {
   view:"overview", hosts:[], activeId:null, settings:{pollMs:POLL_DEFAULT, proxy:false, pauseFs:false, pauseLogs:false},
   watch:[], alerts:[], fsFilter:"all", fsQ:"", logQ:"", logLevel:"all", contQ:"", appQ:"",
-  contFilter:"all", contView:"grid",
+  contFilter:"all", contView:(typeof localStorage!=="undefined"&&localStorage.getItem("pulseboard.contView.v1"))||"group", collapsedStacks:{},
   modal:null, charts:{}, pollTimers:{}
 };
 
@@ -468,9 +468,87 @@ function vOverview(h){
 }
 
 /* ---------- 2. Docker View ---------- */
+function getContainerStack(c){
+  if(c.stack && c.stack !== "standalone") return c.stack;
+  var n=String(c.name||"");
+  if(n.includes("-")) return n.split("-")[0];
+  if(n.includes("_")) return n.split("_")[0];
+  return c.stack || "standalone";
+}
+
+function formatStackTitle(stack){
+  if(!stack || stack==="standalone") return "Standalone Containers";
+  return stack.replace(/[_-]+/g," ").replace(/\b\w/g,function(ch){return ch.toUpperCase();});
+}
+
+function renderContainerCard(c, hostIp){
+  var brand=getContainerBrand(c.name,c.image);
+  var ports=parseCleanPorts(c.ports,hostIp);
+  var portTags=ports.map(function(p){
+    if(p.url)return '<a href="'+p.url+'" target="_blank" rel="noopener" class="portTag" title="Open HTTP port in browser">'+esc(p.label)+' <span style="font-size:9px">↗</span></a>';
+    return '<span class="portTag" style="opacity:0.75">'+esc(p.label)+'</span>';
+  }).join("")||'<span class="muted small" style="font-family:var(--mono)">No exposed ports</span>';
+
+  var cpuPct=clamp(c.cpu||0,0,100).toFixed(1);
+  var memPct=c.memLimit?clamp((c.memUsed/c.memLimit*100),0,100).toFixed(1):(c.memPct||0);
+  var isRunning=c.state==="running";
+
+  return '<div class="cCard'+(isRunning?"":" stopped")+'">'+
+    '<div class="cCardHead">'+
+      '<div class="cCardIcon">'+brand.icon+'</div>'+
+      '<div class="cCardMeta">'+
+        '<div class="cCardTitleRow">'+
+          '<div class="cCardName" title="'+esc(c.name)+'">'+esc(c.name)+'</div>'+
+          statusBadge(c.state)+
+        '</div>'+
+        '<div class="cCardImage" title="'+esc(c.image)+'">'+esc(c.image)+'</div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="cCardMetrics">'+
+      '<div class="mRow">'+
+        '<div class="mRowHead"><span class="mLabel">CPU Utilization</span><span class="mVal">'+cpuPct+'%</span></div>'+
+        '<div class="mBar"><div class="mBarFill" style="width:'+cpuPct+'%"></div></div>'+
+      '</div>'+
+      '<div class="mRow">'+
+        '<div class="mRowHead"><span class="mLabel">Memory Footprint</span><span class="mVal">'+fmtB(c.memUsed)+' <span class="muted">/ '+fmtB(c.memLimit)+'</span></span></div>'+
+        '<div class="mBar"><div class="mBarFill" style="width:'+memPct+'%"></div></div>'+
+      '</div>'+
+      '<div class="cCardNetPorts">'+
+        '<div class="row" style="justify-content:space-between;padding-top:2px">'+
+          '<span class="mLabel">Network I/O</span>'+
+          '<div class="netPill">'+
+            '<span style="color:var(--cyan-bright)">↓ '+fmtB(c.netRx)+'</span>'+
+            '<span style="color:var(--vio-bright)">↑ '+fmtB(c.netTx)+'</span>'+
+          '</div>'+
+        '</div>'+
+        '<div style="padding-top:4px">'+
+          '<div class="mLabel" style="margin-bottom:4px">Ports &amp; Access</div>'+
+          '<div class="portBadges">'+portTags+'</div>'+
+        '</div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="cCardFooter">'+
+      '<div class="cCardStatusText mono">'+esc(c.status||"")+'</div>'+
+      '<div class="cCardActions">'+
+        '<button class="btn sm" data-act="contLogs" data-id="'+c.id+'" title="View Real-Time Logs">'+
+          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Logs'+
+        '</button>'+
+        '<button class="btn sm" data-act="contRestart" data-id="'+c.id+'" title="Restart Container">'+
+          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>'+
+        '</button>'+
+        (isRunning?
+          '<button class="btn sm danger icon-only" data-act="contStop" data-id="'+c.id+'" title="Stop Container"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>':
+          '<button class="btn sm primary icon-only" data-act="contStart" data-id="'+c.id+'" title="Start Container"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>'
+        )+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+
 function vDocker(h){
   var q=(S.contQ||"").toLowerCase();
   var filter=S.contFilter||"all";
+  var viewMode=S.contView||"group";
   
   var total=h.containers.length;
   var running=h.containers.filter(function(c){return c.state==="running";}).length;
@@ -482,17 +560,23 @@ function vDocker(h){
   var netRx=h.containers.reduce(function(acc,c){return acc+(c.netRx||0);},0);
   var netTx=h.containers.reduce(function(acc,c){return acc+(c.netTx||0);},0);
 
+  // Count distinct compose stacks
+  var allStacksMap={};
+  h.containers.forEach(function(c){ allStacksMap[getContainerStack(c)]=true; });
+  var totalStacks=Object.keys(allStacksMap).length;
+
   var list=h.containers.filter(function(c){
     if(filter==="running"&&c.state!=="running")return false;
     if(filter==="stopped"&&c.state==="running")return false;
     if(!q)return true;
-    return (c.name||"").toLowerCase().includes(q)||(c.image||"").toLowerCase().includes(q)||(c.ports||"").toLowerCase().includes(q);
+    var st=getContainerStack(c).toLowerCase();
+    return (c.name||"").toLowerCase().includes(q)||(c.image||"").toLowerCase().includes(q)||(c.ports||"").toLowerCase().includes(q)||st.includes(q);
   });
 
   var kpiHtml='<div class="dockerKpiGrid">'+
     '<div class="kpiCard">'+
-      '<div class="kpiHeader"><span class="kpiTitle">Total Containers</span><div class="kpiIcon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12.5c0 4.14-3.36 7.5-7.5 7.5H4c-.55 0-1-.45-1-1 0-1.5 1-3 3-3h11.5c1.38 0 2.5-1.12 2.5-2.5 0-.75-.33-1.42-.86-1.88l.86-.12z"/></svg></div></div>'+
-      '<div class="kpiValue">'+total+'</div>'+
+      '<div class="kpiHeader"><span class="kpiTitle">Containers &amp; Stacks</span><div class="kpiIcon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12.5c0 4.14-3.36 7.5-7.5 7.5H4c-.55 0-1-.45-1-1 0-1.5 1-3 3-3h11.5c1.38 0 2.5-1.12 2.5-2.5 0-.75-.33-1.42-.86-1.88l.86-.12z"/></svg></div></div>'+
+      '<div class="kpiValue">'+total+' <span class="muted small" style="font-size:13px;font-weight:500">/ '+totalStacks+' Groups</span></div>'+
       '<div class="kpiSub"><span class="badge ok" style="padding:1px 7px;font-size:10px">● '+running+' Active</span> <span class="badge bad" style="padding:1px 7px;font-size:10px">○ '+stopped+' Stopped</span></div>'+
     '</div>'+
     '<div class="kpiCard">'+
@@ -517,22 +601,29 @@ function vDocker(h){
   var toolbarHtml='<div class="dockerToolbar">'+
     '<div class="searchBox">'+
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'+
-      '<input id="contQInput" placeholder="Filter containers by name, image, or ports..." value="'+esc(S.contQ)+'">'+
+      '<input id="contQInput" placeholder="Filter by group, container, image, or ports..." value="'+esc(S.contQ)+'">'+
     '</div>'+
-    '<div class="row" style="gap:10px">'+
+    '<div class="row" style="gap:10px;flex-wrap:wrap">'+
       '<div class="filterTabs">'+
         '<button class="filterTab'+(filter==="all"?" active":"")+'" data-act="setContFilter" data-val="all">All ('+total+')</button>'+
         '<button class="filterTab'+(filter==="running"?" active":"")+'" data-act="setContFilter" data-val="running">Running ('+running+')</button>'+
         '<button class="filterTab'+(filter==="stopped"?" active":"")+'" data-act="setContFilter" data-val="stopped">Stopped ('+stopped+')</button>'+
       '</div>'+
       '<div class="viewToggle">'+
-        '<button class="viewToggleBtn'+(S.contView!=="table"?" active":"")+'" data-act="setContView" data-val="grid" title="Card View">'+
+        '<button class="viewToggleBtn'+(viewMode==="group"?" active":"")+'" data-act="setContView" data-val="group" title="Grouped Stack View">'+
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>'+
+        '</button>'+
+        '<button class="viewToggleBtn'+(viewMode==="grid"?" active":"")+'" data-act="setContView" data-val="grid" title="Flat Grid View">'+
           '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>'+
         '</button>'+
-        '<button class="viewToggleBtn'+(S.contView==="table"?" active":"")+'" data-act="setContView" data-val="table" title="Table View">'+
+        '<button class="viewToggleBtn'+(viewMode==="table"?" active":"")+'" data-act="setContView" data-val="table" title="Table Matrix View">'+
           '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>'+
         '</button>'+
       '</div>'+
+      (viewMode==="group" ? (
+        '<button class="btn sm" data-act="expandAllStacks" title="Expand All Groups">Expand</button>'+
+        '<button class="btn sm" data-act="collapseAllStacks" title="Collapse All Groups">Collapse</button>'
+      ) : '')+
       '<button class="btn sm" data-act="pollNow" data-id="'+h.id+'" title="Reload Docker Status">'+
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>'+
         '<span>Refresh</span>'+
@@ -547,9 +638,10 @@ function vDocker(h){
       '<h3 style="justify-content:center;font-size:16px;color:#fff">No Containers Match Filter</h3>'+
       '<p class="muted" style="margin-top:6px;font-size:13px">Try clearing search keywords or checking if the Docker socket is mounted.</p>'+
     '</div>';
-  } else if(S.contView==="table"){
+  } else if(viewMode==="table"){
     var rows=list.map(function(c){
       var brand=getContainerBrand(c.name,c.image);
+      var st=getContainerStack(c);
       var ports=parseCleanPorts(c.ports,h.ip);
       var portTags=ports.map(function(p){
         if(p.url)return '<a href="'+p.url+'" target="_blank" rel="noopener" class="portTag" title="Open HTTP port in browser">'+esc(p.label)+' <span style="font-size:9px">↗</span></a>';
@@ -561,6 +653,7 @@ function vDocker(h){
 
       return '<tr>'+
         '<td>'+statusBadge(c.state)+'</td>'+
+        '<td><span class="chip mono small">'+esc(st)+'</span></td>'+
         '<td>'+
           '<div class="row" style="gap:10px">'+
             '<div class="cCardIcon" style="width:32px;height:32px;border-radius:8px">'+brand.icon+'</div>'+
@@ -571,13 +664,13 @@ function vDocker(h){
           '</div>'+
         '</td>'+
         '<td>'+
-          '<div style="width:110px">'+
+          '<div style="width:100px">'+
             '<div class="row" style="justify-content:space-between;font-size:11.5px"><span class="mono">'+(c.cpu!=null?c.cpu.toFixed(1)+"%":"0.0%")+'</span></div>'+
             '<div class="bar" style="margin-top:4px"><i style="width:'+clamp(c.cpu||0,0,100)+'%"></i></div>'+
           '</div>'+
         '</td>'+
         '<td>'+
-          '<div style="width:140px">'+
+          '<div style="width:130px">'+
             '<div class="row" style="justify-content:space-between;font-size:11px"><span class="mono">'+fmtB(c.memUsed)+'</span><span class="mono muted">'+memPct+'%</span></div>'+
             '<div class="bar" style="margin-top:4px"><i style="width:'+clamp(memPct,0,100)+'%"></i></div>'+
           '</div>'+
@@ -606,80 +699,72 @@ function vDocker(h){
 
     bodyHtml='<div class="contTableWrap">'+
       '<table class="contTable">'+
-        '<thead><tr><th>Status</th><th>Container / Image</th><th>CPU Load</th><th>Memory In-Use</th><th>Network I/O</th><th>Exposed Ports</th><th>Uptime</th><th>Actions</th></tr></thead>'+
+        '<thead><tr><th>Status</th><th>Stack</th><th>Container / Image</th><th>CPU Load</th><th>Memory In-Use</th><th>Network I/O</th><th>Exposed Ports</th><th>Uptime</th><th>Actions</th></tr></thead>'+
         '<tbody>'+rows+'</tbody>'+
       '</table>'+
     '</div>';
+  } else if(viewMode==="grid"){
+    bodyHtml='<div class="contGrid">'+list.map(function(c){return renderContainerCard(c,h.ip);}).join("")+'</div>';
   } else {
-    var cards=list.map(function(c){
-      var brand=getContainerBrand(c.name,c.image);
-      var ports=parseCleanPorts(c.ports,h.ip);
-      var portTags=ports.map(function(p){
-        if(p.url)return '<a href="'+p.url+'" target="_blank" rel="noopener" class="portTag" title="Open HTTP port in browser">'+esc(p.label)+' <span style="font-size:9px">↗</span></a>';
-        return '<span class="portTag" style="opacity:0.75">'+esc(p.label)+'</span>';
-      }).join("")||'<span class="muted small" style="font-family:var(--mono)">No exposed ports</span>';
+    // Grouped Stacks View (default)
+    var groupsMap={};
+    list.forEach(function(c){
+      var st=getContainerStack(c);
+      if(!groupsMap[st]){
+        groupsMap[st]={stack:st, title:formatStackTitle(st), items:[], running:0, stopped:0, cpuSum:0, memSum:0, rxSum:0, txSum:0};
+      }
+      var g=groupsMap[st];
+      g.items.push(c);
+      if(c.state==="running") g.running++; else g.stopped++;
+      g.cpuSum+=(c.cpu||0);
+      g.memSum+=(c.memUsed||0);
+      g.rxSum+=(c.netRx||0);
+      g.txSum+=(c.netTx||0);
+    });
 
-      var cpuPct=clamp(c.cpu||0,0,100).toFixed(1);
-      var memPct=c.memLimit?clamp((c.memUsed/c.memLimit*100),0,100).toFixed(1):(c.memPct||0);
-      var isRunning=c.state==="running";
+    var groups=Object.values(groupsMap).sort(function(a,b){
+      if(a.stack==="standalone" && b.stack!=="standalone") return 1;
+      if(b.stack==="standalone" && a.stack!=="standalone") return -1;
+      if(b.running!==a.running) return b.running-a.running;
+      return a.stack.localeCompare(b.stack);
+    });
 
-      return '<div class="cCard'+(isRunning?"":" stopped")+'">'+
-        '<div class="cCardHead">'+
-          '<div class="cCardIcon">'+brand.icon+'</div>'+
-          '<div class="cCardMeta">'+
-            '<div class="cCardTitleRow">'+
-              '<div class="cCardName" title="'+esc(c.name)+'">'+esc(c.name)+'</div>'+
-              statusBadge(c.state)+
+    var groupsHtml=groups.map(function(g){
+      var isCollapsed=!!S.collapsedStacks[g.stack];
+      var healthCls = g.running===g.items.length ? "ok" : (g.running>0 ? "warn" : "bad");
+      var cardsHtml=g.items.map(function(c){return renderContainerCard(c,h.ip);}).join("");
+
+      return '<div class="stackGroup'+(isCollapsed?" collapsed":"")+'">'+
+        '<div class="stackHeader" data-act="toggleStack" data-val="'+esc(g.stack)+'">'+
+          '<div class="stackTitleWrap">'+
+            '<div class="stackChevron"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div>'+
+            '<div class="stackIcon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div>'+
+            '<span class="stackTitle">'+esc(g.title)+'</span>'+
+            '<span class="chip small mono" style="font-size:10.5px">'+esc(g.stack)+'</span>'+
+            '<span class="badge '+healthCls+'">● '+g.running+' / '+g.items.length+' Running</span>'+
+          '</div>'+
+          '<div class="stackRight">'+
+            '<div class="stackMetrics">'+
+              '<div class="stackStat"><span class="stackStatLabel">CPU</span><b>'+g.cpuSum.toFixed(1)+'%</b></div>'+
+              '<div class="stackStat"><span class="stackStatLabel">RAM</span><b>'+fmtB(g.memSum)+'</b></div>'+
+              '<div class="stackStat"><span class="stackStatLabel">NET</span><span style="color:var(--cyan-bright)">↓'+fmtB(g.rxSum)+'</span> <span style="color:var(--vio-bright)">↑'+fmtB(g.txSum)+'</span></div>'+
             '</div>'+
-            '<div class="cCardImage" title="'+esc(c.image)+'">'+esc(c.image)+'</div>'+
+            '<button class="btn sm" data-act="stackRestart" data-val="'+esc(g.stack)+'" title="Restart all containers in '+esc(g.stack)+'">'+
+              '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg> Restart Stack'+
+            '</button>'+
           '</div>'+
         '</div>'+
-        '<div class="cCardMetrics">'+
-          '<div class="mRow">'+
-            '<div class="mRowHead"><span class="mLabel">CPU Utilization</span><span class="mVal">'+cpuPct+'%</span></div>'+
-            '<div class="mBar"><div class="mBarFill" style="width:'+cpuPct+'%"></div></div>'+
-          '</div>'+
-          '<div class="mRow">'+
-            '<div class="mRowHead"><span class="mLabel">Memory Footprint</span><span class="mVal">'+fmtB(c.memUsed)+' <span class="muted">/ '+fmtB(c.memLimit)+'</span></span></div>'+
-            '<div class="mBar"><div class="mBarFill" style="width:'+memPct+'%"></div></div>'+
-          '</div>'+
-          '<div class="cCardNetPorts">'+
-            '<div class="row" style="justify-content:space-between;padding-top:2px">'+
-              '<span class="mLabel">Network I/O</span>'+
-              '<div class="netPill">'+
-                '<span style="color:var(--cyan-bright)">↓ '+fmtB(c.netRx)+'</span>'+
-                '<span style="color:var(--vio-bright)">↑ '+fmtB(c.netTx)+'</span>'+
-              '</div>'+
-            '</div>'+
-            '<div style="padding-top:4px">'+
-              '<div class="mLabel" style="margin-bottom:4px">Ports &amp; Access</div>'+
-              '<div class="portBadges">'+portTags+'</div>'+
-            '</div>'+
-          '</div>'+
-        '</div>'+
-        '<div class="cCardFooter">'+
-          '<div class="cCardStatusText mono">'+esc(c.status||"")+'</div>'+
-          '<div class="cCardActions">'+
-            '<button class="btn sm" data-act="contLogs" data-id="'+c.id+'" title="View Real-Time Logs">'+
-              '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Logs'+
-            '</button>'+
-            '<button class="btn sm" data-act="contRestart" data-id="'+c.id+'" title="Restart Container">'+
-              '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>'+
-            '</button>'+
-            (isRunning?
-              '<button class="btn sm danger icon-only" data-act="contStop" data-id="'+c.id+'" title="Stop Container"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>':
-              '<button class="btn sm primary icon-only" data-act="contStart" data-id="'+c.id+'" title="Start Container"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>'
-            )+
-          '</div>'+
+        '<div class="stackBody">'+
+          '<div class="contGrid">'+cardsHtml+'</div>'+
         '</div>'+
       '</div>';
     }).join("");
 
-    bodyHtml='<div class="contGrid">'+cards+'</div>';
+    bodyHtml='<div class="stackGroups">'+groupsHtml+'</div>';
   }
 
   return ''+
-  '<div class="viewHead"><h2>Docker Container Fleet</h2><p>'+hostHealthLine(h)+' — Complete container telemetry, resource quotas, port bindings, and live log tailing.</p></div>'+
+  '<div class="viewHead"><h2>Docker Container Stacks &amp; Fleet</h2><p>'+hostHealthLine(h)+' — Containers grouped by project stack with aggregated metrics, port links, and live logs.</p></div>'+
   kpiHtml+
   toolbarHtml+
   bodyHtml;
@@ -1296,7 +1381,51 @@ document.addEventListener("click",async function(e){
     S.contFilter=t.getAttribute("data-val")||"all";render(false);
   }
   else if(act==="setContView"){
-    S.contView=t.getAttribute("data-val")||"grid";render(false);
+    S.contView=t.getAttribute("data-val")||"group";
+    try{if(typeof localStorage!=="undefined")localStorage.setItem("pulseboard.contView.v1",S.contView);}catch(_e){}
+    render(false);
+  }
+  else if(act==="toggleStack"){
+    var sk=t.getAttribute("data-val");
+    if(sk){S.collapsedStacks[sk]=!S.collapsedStacks[sk];render(false);}
+  }
+  else if(act==="expandAllStacks"){
+    S.collapsedStacks={};render(false);
+  }
+  else if(act==="collapseAllStacks"){
+    var nextCol={};
+    ((h&&h.containers)||[]).forEach(function(tc){nextCol[getContainerStack(tc)]=true;});
+    S.collapsedStacks=nextCol;render(false);
+  }
+  else if(act==="stackRestart"){
+    e.stopPropagation();
+    var rStack=t.getAttribute("data-val");
+    if(!rStack)return;
+    if(!h||!h.base){toast("Restart needs a live host","warn");return;}
+    var targets=((h&&h.containers)||[]).filter(function(tc){return getContainerStack(tc)===rStack;});
+    if(!targets.length){toast("No containers found in stack "+rStack,"warn");return;}
+    var stackLabel=formatStackTitle(rStack);
+    if(!confirm("Restart all "+targets.length+" container"+(targets.length===1?"":"s")+" in stack "+stackLabel+" on "+h.name+"?"))return;
+    targets=targets.slice().sort(function(a,b){
+      return (/sysmon-(backend|frontend)/i.test(a.name)?1:0)-(/sysmon-(backend|frontend)/i.test(b.name)?1:0);
+    });
+    var hdS={"Content-Type":"application/json"};if(h.token)hdS["Authorization"]="Bearer "+h.token;
+    toast("Restarting "+targets.length+" container"+(targets.length===1?"":"s")+" in "+stackLabel+"...");
+    var okCnt=0,failList=[];
+    for(var si=0;si<targets.length;si++){
+      var tc=targets[si];
+      try{
+        var sr=await fetch(h.base+"/api/containers/"+encodeURIComponent(tc.id||tc.name)+"/restart",{method:"POST",headers:hdS});
+        if(!sr.ok)throw new Error("HTTP "+sr.status);
+        okCnt++;
+      }catch(serr){failList.push(tc.name+" ("+serr.message+")");}
+    }
+    if(failList.length){
+      toast("Restarted "+okCnt+"/"+targets.length+" in "+stackLabel+"; failed: "+failList.join(", "),okCnt?"warn":"bad");
+    }else{
+      toast("Restart delivered to "+okCnt+" container"+(okCnt===1?"":"s")+" in "+stackLabel);
+    }
+    pollHost(h);
   }
   else if(act==="copyLogs"){
     var box=$("modalLogBox");

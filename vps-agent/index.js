@@ -276,10 +276,29 @@ function getDockerDetails() {
         const cpuPct = parseFloat(String(stat.CPUPerc || "0").replace("%", "")) || 0;
         const memPct = parseFloat(String(stat.MemPerc || "0").replace("%", "")) || (memLimit > 0 ? (memUsed / memLimit) * 100 : 0);
 
+        let stack = "standalone";
+        if (c.Labels) {
+          const m = String(c.Labels).match(/com\.docker\.compose\.project=([^,]+)/);
+          if (m && m[1]) stack = m[1].trim();
+        }
+        if (stack === "standalone") {
+          const n = String(c.Names || "");
+          if (n.includes("-")) stack = n.split("-")[0];
+          else if (n.includes("_")) stack = n.split("_")[0];
+        }
+        let service = c.Names;
+        if (c.Labels) {
+          const m = String(c.Labels).match(/com\.docker\.compose\.service=([^,]+)/);
+          if (m && m[1]) service = m[1].trim();
+        }
+
         containers.push({
           id: c.ID,
           name: c.Names,
           image: c.Image,
+          stack,
+          service,
+          network: c.Networks || "",
           state: isRunning ? "running" : isPaused ? "paused" : "exited",
           status: c.Status,
           created: c.CreatedAt,
