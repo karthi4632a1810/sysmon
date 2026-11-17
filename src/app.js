@@ -1098,13 +1098,15 @@ function paintHostPicker(){
   var cur=activeHost();
   if(sel){
     var targetHtml=S.hosts.map(function(h){
+      var isInstabox = (h.base && h.base.includes("instabox.tech")) || (h.name && h.name.includes("Instabox"));
       var isSsh = (h.base && h.base.includes("/ssh")) || (h.name && h.name.includes("SSH"));
-      var isVps = (h.base && h.base.includes("192.168.101.116")) || (h.ip === "192.168.101.116") || isSsh;
+      var isLanVps = (h.base && h.base.includes("192.168.101.116")) || (h.ip === "192.168.101.116");
       var isLocal = (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1")) && !isSsh) || (h.ip === "127.0.0.1" && !isSsh);
-      var icon = isSsh ? "🔑 " : (isVps ? "☁️ " : (isLocal ? "💻 " : "🖥️ "));
+      var icon = isInstabox ? "⚡ " : (isSsh ? "🔑 " : (isLanVps ? "☁️ " : (isLocal ? "💻 " : "🖥️ ")));
       var title = h.name || "Server";
-      if(isSsh && !title.includes("SSH")) title = "VPS · admin (SSH Agentless)";
-      else if(isVps && !title.includes("192.168.101.116") && !isSsh) title = "VPS · " + (h.name||"admin") + " (192.168.101.116)";
+      if(isInstabox && !title.includes("Instabox")) title = "Cloud VPS · karthivps (" + (h.base.includes("55555")?"Port 55555":"Instabox") + ")";
+      else if(isSsh && !title.includes("SSH")) title = "LAN VPS · admin (SSH Agentless)";
+      else if(isLanVps && !title.includes("192.168.101.116") && !isSsh && !isInstabox) title = "LAN VPS · " + (h.name||"admin") + " (192.168.101.116)";
       else if(isLocal && !title.toLowerCase().includes("local")) title = "Localhost (" + (h.ip||"127.0.0.1") + ")";
       var stat = h.status==="online" ? "● Online ("+(h.ms!=null?h.ms+"ms":"ok")+")" : (h.status==="polling" ? "◌ Sync" : "○ Offline");
       return '<option value="'+h.id+'"'+(h.id===S.activeId?" selected":"")+'>'+icon+esc(title)+' — '+stat+'</option>';
@@ -1121,7 +1123,9 @@ function paintHostPicker(){
   var pillVps = $("pillVps");
   var pillLocal = $("pillLocal");
   if(pillVps && pillLocal && cur){
-    var isCurVps = (cur.base && (cur.base.includes("192.168.101.116") || cur.base.includes("/ssh"))) || (cur.ip === "192.168.101.116") || (cur.name && cur.name.includes("VPS"));
+    var isCurCloud = cur.base && cur.base.includes("instabox.tech");
+    var isCurLan = (cur.base && (cur.base.includes("192.168.101.116") || cur.base.includes("/ssh"))) || (cur.ip === "192.168.101.116");
+    var isCurVps = isCurCloud || isCurLan;
     if(isCurVps){
       pillVps.classList.add("active");
       pillLocal.classList.remove("active");
@@ -1129,8 +1133,20 @@ function paintHostPicker(){
       pillLocal.classList.add("active");
       pillVps.classList.remove("active");
     }
+
+    var pillLabel = pillVps.querySelector("span:not(.dot)");
+    if(pillLabel){
+      if(isCurCloud){
+        pillLabel.textContent = "⚡ Cloud (Instabox)";
+      } else if(isCurLan){
+        pillLabel.textContent = "☁️ LAN VPS (116)";
+      } else {
+        pillLabel.textContent = "⚡ Cloud VPS";
+      }
+    }
+
     // Update live status dots on pills
-    var vpsH = S.hosts.find(function(h){ return (h.base && (h.base.includes("192.168.101.116") || h.base.includes("/ssh"))) || h.ip === "192.168.101.116" || (h.name && h.name.includes("VPS")); });
+    var vpsH = S.hosts.find(function(h){ return (h.base && h.base.includes("instabox.tech") && !h.base.includes("55555")) || (h.base && (h.base.includes("192.168.101.116") || h.base.includes("/ssh"))); });
     var localH = S.hosts.find(function(h){ return (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1")) && !h.base.includes("/ssh")) || h.ip === "127.0.0.1"; });
     if(vpsH){
       var vDot = pillVps.querySelector(".dot");
@@ -1308,14 +1324,26 @@ function drawMulti(cv,host){
 document.addEventListener("click",async function(e){
   var pv=e.target.closest("#pillVps");
   if(pv){
-    var vHost=S.hosts.find(function(x){return (x.base&&(x.base.includes("192.168.101.116")||x.base.includes("/ssh")))||x.ip==="192.168.101.116"||(x.name&&x.name.includes("VPS"));});
-    if(vHost && S.activeId!==vHost.id){
-      S.activeId=vHost.id;
-      localStorage.setItem("pulseboard.activeBase.v1",vHost.base);
-      pollHost(vHost);
+    var curH = activeHost();
+    var instaboxH = S.hosts.find(function(x){return (x.base && x.base.includes("instabox.tech") && !x.base.includes("55555")) || (x.name && x.name.includes("Instabox"));});
+    var lanVpsH = S.hosts.find(function(x){return (x.base && (x.base.includes("192.168.101.116") || x.base.includes("/ssh"))) || x.ip==="192.168.101.116";});
+    
+    var targetH = null;
+    if(curH === instaboxH && lanVpsH){
+      targetH = lanVpsH;
+    } else if(instaboxH){
+      targetH = instaboxH;
+    } else {
+      targetH = lanVpsH;
+    }
+
+    if(targetH && S.activeId!==targetH.id){
+      S.activeId=targetH.id;
+      localStorage.setItem("pulseboard.activeBase.v1",targetH.base);
+      pollHost(targetH);
       render(true);
       paintHostPicker();
-      toast("Switched to Remote VPS (192.168.101.116)","info");
+      toast("Switched to " + targetH.name,"info");
     }
     return;
   }
@@ -1576,12 +1604,20 @@ function boot(){
     if(!Array.isArray(saved)) saved=[];
 
     var currentOrigin=(window.location&&window.location.origin&&!window.location.origin.startsWith("file:"))?window.location.origin:"";
-    var isOnVps = currentOrigin.includes("192.168.101.116");
+    var isInstabox = currentOrigin.includes("instabox.tech");
+    var isLanVps = currentOrigin.includes("192.168.101.116");
+    var isOnVps = isLanVps || isInstabox;
+
+    var instaboxBase = "https://11111-agq5ssqp2qnhrx62sg4buw2j7m.instabox.tech";
+    var instaboxAgent = "https://55555-agq5ssqp2qnhrx62sg4buw2j7m.instabox.tech";
 
     var localBase = (currentOrigin && !isOnVps) ? currentOrigin : "http://localhost:22222";
     var vpsSshBase = localBase + "/api/ssh";
     var vpsDirectBase = "http://192.168.101.116:22222";
 
+    var hasInstabox = saved.some(function(h){
+      return (h.base && h.base.includes("instabox.tech")) || (h.name && h.name.includes("Instabox"));
+    });
     var hasSshVps = saved.some(function(h){
       return (h.base && h.base.includes("/ssh")) || (h.name && h.name.includes("SSH"));
     });
@@ -1589,19 +1625,39 @@ function boot(){
       return (h.base && (h.base.includes("localhost") || h.base.includes("127.0.0.1")) && !h.base.includes("/ssh")) || (h.name && h.name.toLowerCase().includes("local"));
     });
 
-    if(!hasSshVps){
-      saved.unshift({name:"VPS (192.168.101.116) [SSH Agentless]", base:vpsSshBase, token:""});
-    }
-    if(!hasLocal){
-      saved.push({name:"Local Machine (localhost)", base:localBase, token:""});
+    if(isInstabox){
+      var hasCurrent = saved.some(function(h){ return h.base === currentOrigin; });
+      if(!hasCurrent){
+        saved.unshift({name:"karthivps (Cloud VPS · Instabox)", base:currentOrigin, token:""});
+      }
+      var hasAgent = saved.some(function(h){ return h.base && h.base.includes("55555"); });
+      if(!hasAgent){
+        saved.push({name:"karthivps Agent (Port 55555)", base:instaboxAgent, token:""});
+      }
+    } else {
+      if(!hasInstabox){
+        saved.unshift({name:"karthivps (Cloud VPS · Instabox)", base:instaboxBase, token:""});
+      }
+      if(!hasSshVps){
+        saved.push({name:"LAN VPS (192.168.101.116) [SSH Agentless]", base:vpsSshBase, token:""});
+      }
+      if(!hasLocal){
+        saved.push({name:"Local Machine (localhost)", base:localBase, token:""});
+      }
     }
 
     // Standardize friendly names & clean up old container ID hashes
     saved.forEach(function(c){
-      if(c.base && c.base.includes("/ssh")){
-        c.name = "VPS (192.168.101.116) [SSH Agentless]";
+      if(c.base && c.base.includes("instabox.tech")){
+        if(c.base.includes("55555")){
+          c.name = "karthivps Agent (Port 55555)";
+        } else {
+          c.name = "karthivps (Cloud VPS · Instabox)";
+        }
+      } else if(c.base && c.base.includes("/ssh")){
+        c.name = "LAN VPS (192.168.101.116) [SSH Agentless]";
       } else if(c.base && c.base.includes("192.168.101.116")){
-        c.name = "VPS (192.168.101.116)";
+        c.name = "LAN VPS (192.168.101.116)";
       } else if(c.base && (c.base.includes("localhost") || c.base.includes("127.0.0.1"))){
         c.name = "Local Machine (localhost)";
       }
@@ -1612,13 +1668,16 @@ function boot(){
     saveHosts();
   }catch(e){}
 
-  // Select initial active host: prioritize saved preference, then VPS
+  // Select initial active host: prioritize saved preference, then Cloud VPS or current environment
   var savedBase = localStorage.getItem("pulseboard.activeBase.v1");
   var matchedHost = savedBase ? S.hosts.find(function(h){return h.base===savedBase;}) : null;
   if(matchedHost){
     S.activeId = matchedHost.id;
+  } else if(isInstabox){
+    var instHost = S.hosts.find(function(h){return h.base === currentOrigin || (h.base && h.base.includes("instabox.tech") && !h.base.includes("55555"));});
+    S.activeId = instHost ? instHost.id : (S.hosts[0] ? S.hosts[0].id : null);
   } else {
-    var vHost = S.hosts.find(function(h){return (h.base && (h.base.includes("/ssh") || h.base.includes("192.168.101.116")));});
+    var vHost = S.hosts.find(function(h){return (h.base && h.base.includes("instabox.tech") && !h.base.includes("55555")) || (h.base && (h.base.includes("/ssh") || h.base.includes("192.168.101.116")));});
     S.activeId = vHost ? vHost.id : (S.hosts[0] ? S.hosts[0].id : null);
   }
   
